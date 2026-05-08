@@ -38,6 +38,10 @@ const els = {
   walletStatus: document.querySelector("#walletStatus"),
   currentRiskText: document.querySelector("#currentRiskText"),
   riskButtons: document.querySelector("#riskButtons"),
+  customRisk: document.querySelector("#customRiskInput"),
+  applyCustomRisk: document.querySelector("#applyCustomRiskButton"),
+  positionsMeta: document.querySelector("#positionsMeta"),
+  positionsBody: document.querySelector("#positionsBody"),
   priceChart: document.querySelector("#priceChart"),
   scoreChart: document.querySelector("#scoreChart"),
   rsiChart: document.querySelector("#rsiChart"),
@@ -405,16 +409,59 @@ function renderRiskButtons(suggestions) {
     .join("");
   els.riskButtons.querySelectorAll("button").forEach((button) => {
     button.addEventListener("click", () => {
-      els.risk.value = button.dataset.risk;
-      updateRiskText();
-      loadSnapshot();
-      if (isTracking) loadTracking();
+      applyRiskAmount(button.dataset.risk);
     });
   });
 }
 
+function applyRiskAmount(amount) {
+  const risk = Number(amount);
+  if (!Number.isFinite(risk) || risk <= 0) return;
+  els.risk.value = risk.toFixed(4);
+  updateRiskText();
+  loadSnapshot();
+  if (isTracking) loadTracking();
+}
+
 function updateRiskText() {
   els.currentRiskText.textContent = `$${fmtNumber(els.risk.value, 2)}`;
+}
+
+function renderPositions(positions) {
+  const rows = positions || [];
+  els.positionsMeta.textContent = rows.length ? `${rows.length} open` : "No active positions";
+  if (!rows.length) {
+    els.positionsBody.innerHTML = `<tr><td colspan="8">No active futures positions.</td></tr>`;
+    return;
+  }
+  els.positionsBody.innerHTML = rows
+    .map((pos) => {
+      const sideClass = pos.side === "LONG" ? "positive" : "negative";
+      const pnl = Number(pos.unrealized_pnl);
+      const pnlClass = Number.isFinite(pnl) ? (pnl >= 0 ? "positive" : "negative") : "neutral";
+      return `
+        <tr data-pair="${pos.pair || ""}" data-market="${marketForCoin(pos.coin || "")}">
+          <td><button type="button" class="row-coin">${pos.coin || "--"}</button></td>
+          <td><span class="${sideClass}">${pos.side || "--"}</span></td>
+          <td>${fmtNumber(pos.quantity, 6)}</td>
+          <td>${fmtPrice(pos.avg_price)}</td>
+          <td>${fmtPrice(pos.mark_price)}</td>
+          <td>${fmtPrice(pos.stop_loss_trigger)}</td>
+          <td>${fmtPrice(pos.take_profit_trigger)}</td>
+          <td><span class="${pnlClass}">${fmtNumber(pos.unrealized_pnl, 2)}</span></td>
+        </tr>
+      `;
+    })
+    .join("");
+  els.positionsBody.querySelectorAll("tr[data-pair]").forEach((row) => {
+    row.addEventListener("click", () => {
+      if (!row.dataset.pair) return;
+      els.pair.value = row.dataset.pair;
+      els.market.value = row.dataset.market;
+      els.mode.value = "futures";
+      loadSnapshot();
+    });
+  });
 }
 
 async function loadAccount() {
@@ -432,15 +479,18 @@ async function loadAccount() {
       els.walletBalance.textContent = "--";
       els.walletStatus.textContent = data.message || "API keys not set.";
       renderRiskButtons([]);
+      renderPositions([]);
       return;
     }
     els.walletBalance.textContent = `${fmtNumber(data.available_quote_balance, 2)} ${data.currency || ""}`;
     els.walletStatus.textContent = `${data.mode?.toUpperCase() || "FUTURES"} wallet · read-only`;
     renderRiskButtons(data.risk_suggestions || []);
+    renderPositions(data.positions || []);
   } catch (error) {
     els.walletBalance.textContent = "--";
     els.walletStatus.textContent = error.message;
     renderRiskButtons([]);
+    renderPositions([]);
   }
 }
 
@@ -640,6 +690,13 @@ function scheduleRefresh() {
 
 els.refresh.addEventListener("click", loadSnapshot);
 els.refreshAccount.addEventListener("click", loadAccount);
+els.applyCustomRisk.addEventListener("click", () => applyRiskAmount(els.customRisk.value));
+els.customRisk.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    applyRiskAmount(els.customRisk.value);
+  }
+});
 els.coinSearch.addEventListener("input", renderCoinPicker);
 els.addCoin.addEventListener("click", addCustomCoin);
 els.customCoin.addEventListener("keydown", (event) => {

@@ -164,5 +164,6 @@ futures instruments, lets you search/select multiple coins, start tracking them
 together, and click any row to load that coin into the detailed chart below.
 
 The Wallet + Risk panel is read-only. When `COINDCX_API_KEY` and
-`COINDCX_API_SECRET` are set in `.env`, it shows available futures wallet balance
-and suggested risk values at 0.25%, 0.5%, 1%, and 2% of available balance.
+`COINDCX_API_SECRET` are set in `.env`, it shows available futures wallet
+balance, active futures positions, suggested risk values at 0.25%, 0.5%, 1%,
+and 2% of available balance, plus a custom risk input.
