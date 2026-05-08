@@ -51,6 +51,7 @@ const els = {
 };
 
 let refreshTimer = null;
+let accountTimer = null;
 let lastSnapshot = null;
 let liveSource = null;
 let liveQuote = null;
@@ -458,6 +459,7 @@ async function saveSettings() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(collectSettings()),
     });
+    loadAccount();
   } catch (error) {
     console.warn("Could not save settings", error);
   }
@@ -764,6 +766,11 @@ function scheduleRefresh() {
   refreshTimer = window.setInterval(loadSnapshot, 15000);
 }
 
+function scheduleAccountRefresh() {
+  if (accountTimer) window.clearInterval(accountTimer);
+  accountTimer = window.setInterval(loadAccount, 10000);
+}
+
 els.refresh.addEventListener("click", loadSnapshot);
 els.refreshAccount.addEventListener("click", loadAccount);
 els.applyCustomRisk.addEventListener("click", () => applyRiskAmount(els.customRisk.value));
@@ -823,3 +830,4 @@ Promise.all([loadStrategies(), loadSettings(), loadFuturesMarkets()]).then(() =>
   startTracking();
 });
 scheduleRefresh();
+scheduleAccountRefresh();

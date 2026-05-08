@@ -12,6 +12,7 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 import time
 import traceback
 import importlib.util
@@ -88,6 +89,68 @@ DEFAULT_SETTINGS = {
     "lookback_days": os.getenv("DEFAULT_LOOKBACK_DAYS", "3"),
     "selected_coins": "BTC,ETH,SOL",
 }
+
+# ---------------------------------------------------------------------------
+# Background bot thread
+# ---------------------------------------------------------------------------
+_bot_lock = threading.Lock()
+_bot_thread: threading.Thread | None = None
+_bot_stop = threading.Event()
+
+
+def _bot_worker(cfg: "bot.RuntimeConfig", stop: threading.Event) -> None:
+    import time as _time
+    while not stop.is_set():
+        try:
+            t = threading.Thread(target=bot.run_monitor, args=(cfg,), daemon=True)
+            t.start()
+            while not stop.is_set():
+                t.join(timeout=2)
+                if not t.is_alive():
+                    break
+            return
+        except Exception:
+            traceback.print_exc()
+            _time.sleep(5)
+
+
+def start_bot(settings: dict) -> None:
+    global _bot_thread, _bot_stop
+    with _bot_lock:
+        _stop_bot_locked()
+        if os.getenv("PLACE_ORDERS", "false").lower() != "true":
+            return
+        pair = settings.get("pair", DEFAULT_PAIR)
+        market = settings.get("market", DEFAULT_MARKET)
+        mode = settings.get("mode", "futures")
+        risk = float(settings.get("risk", 1))
+        lookback_days = int(settings.get("lookback_days", 3))
+        leverage = float(settings.get("leverage", 1))
+        cfg = _cfg(pair, market, mode, risk, lookback_days)
+        cfg.leverage = leverage
+        _bot_stop = threading.Event()
+        _bot_thread = threading.Thread(
+            target=_bot_worker, args=(cfg, _bot_stop), daemon=True, name="bot-monitor"
+        )
+        _bot_thread.start()
+        print(f"[bot] started | pair={pair} market={market} mode={mode} risk={risk} place_orders=True")
+
+
+def _stop_bot_locked() -> None:
+    global _bot_thread, _bot_stop
+    if _bot_thread and _bot_thread.is_alive():
+        _bot_stop.set()
+        _bot_thread.join(timeout=10)
+        print("[bot] stopped")
+    _bot_thread = None
+
+
+def stop_bot() -> None:
+    with _bot_lock:
+        _stop_bot_locked()
+
+
+# ---------------------------------------------------------------------------
 
 
 def db_conn() -> sqlite3.Connection:
@@ -749,6 +812,7 @@ def update_settings(payload: dict) -> dict:
     settings["selected_coins"] = [
         item for item in str(settings.get("selected_coins") or "").split(",") if item
     ]
+    start_bot(settings)
     return {"ok": True, "settings": settings}
 
 
@@ -864,7 +928,11 @@ def main() -> None:
     server = DashboardServer((host, port), DashboardHandler)
     print(f"CoinDCX dashboard running at http://{host}:{port}")
     print("Press Ctrl+C to stop.")
-    server.serve_forever()
+    start_bot(load_settings())
+    try:
+        server.serve_forever()
+    finally:
+        stop_bot()
 
 
 if __name__ == "__main__":
