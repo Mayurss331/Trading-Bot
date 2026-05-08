@@ -1,0 +1,521 @@
+:root {
+  color-scheme: dark;
+  --bg: #111315;
+  --panel: #191d21;
+  --panel-2: #20252b;
+  --text: #eff3f4;
+  --muted: #97a2aa;
+  --line: #303942;
+  --green: #38c978;
+  --red: #ef6262;
+  --amber: #e3b341;
+  --cyan: #5bb8d6;
+  --blue: #7a9cf7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 84px;
+  padding: 18px clamp(16px, 4vw, 42px);
+  border-bottom: 1px solid var(--line);
+  background: #15181b;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(24px, 3vw, 36px);
+  line-height: 1.1;
+}
+
+h2 {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+p,
+small,
+span {
+  color: var(--muted);
+}
+
+main {
+  display: grid;
+  gap: 18px;
+  padding: 18px clamp(14px, 3vw, 34px) 34px;
+}
+
+.status-pill {
+  min-width: 104px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  text-align: center;
+  color: var(--amber);
+  background: #1d1a12;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.status-pill.ok {
+  color: var(--green);
+  background: #132018;
+}
+
+.status-pill.bad {
+  color: var(--red);
+  background: #241616;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: minmax(150px, 1.2fr) minmax(130px, 1fr) minmax(150px, 1fr) minmax(110px, 0.7fr) minmax(90px, 0.6fr) minmax(100px, 0.6fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+}
+
+label span {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+input,
+select,
+button {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  padding: 8px 10px;
+}
+
+button {
+  min-width: 110px;
+  cursor: pointer;
+  background: #22314a;
+  border-color: #36517b;
+  color: #eef5ff;
+  font-weight: 800;
+}
+
+button:hover {
+  background: #294064;
+}
+
+.tracker {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.tracker-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.tracker-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.tracker-actions button {
+  min-width: 92px;
+}
+
+.coin-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 210px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.coin-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: auto;
+  min-width: 74px;
+  min-height: 34px;
+  padding: 7px 10px;
+  background: var(--panel-2);
+  border-color: var(--line);
+}
+
+.coin-chip strong {
+  color: inherit;
+  font-size: 13px;
+}
+
+.coin-chip small {
+  color: inherit;
+  opacity: 0.72;
+  font-size: 11px;
+}
+
+.coin-chip.active {
+  color: #06130b;
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.market-search-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 420px) auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.selected-count {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.empty-picker {
+  padding: 10px;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.custom-coin-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 240px) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.tracking-meta {
+  min-height: 20px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tracking-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.tracking-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.tracking-table th,
+.tracking-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.tracking-table th {
+  color: var(--muted);
+  font-size: 12px;
+  background: #15191d;
+}
+
+.tracking-table tr:hover td {
+  background: #1f252b;
+}
+
+.tracking-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.row-coin {
+  width: auto;
+  min-width: 58px;
+  min-height: 28px;
+  padding: 4px 8px;
+  background: #22314a;
+}
+
+.bad-row td {
+  color: var(--red);
+}
+
+.account-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.account-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.account-head button {
+  width: auto;
+}
+
+.account-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(180px, 0.5fr) minmax(280px, 1.2fr);
+  gap: 12px;
+}
+
+.account-box {
+  display: grid;
+  gap: 8px;
+  min-height: 92px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+
+.account-box strong {
+  font-size: 24px;
+}
+
+.risk-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.risk-buttons button {
+  width: auto;
+  min-width: 94px;
+  min-height: 32px;
+  padding: 6px 8px;
+}
+
+.muted-text {
+  color: var(--muted);
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metric,
+.chart-panel,
+.detail-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.metric {
+  display: grid;
+  gap: 8px;
+  min-height: 96px;
+  padding: 14px;
+}
+
+.metric strong {
+  font-size: clamp(20px, 2.5vw, 30px);
+  line-height: 1;
+}
+
+.metric small {
+  min-height: 18px;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(280px, 0.8fr);
+  grid-auto-rows: min-content;
+  gap: 14px;
+}
+
+.price-panel {
+  grid-row: span 2;
+}
+
+.chart-panel {
+  min-width: 0;
+  padding: 14px;
+}
+
+.panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 10px;
+}
+
+.legend {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.swatch {
+  display: inline-block;
+  width: 18px;
+  height: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+  border-radius: 2px;
+}
+
+.swatch.price {
+  background: var(--cyan);
+}
+
+.swatch.trend {
+  background: var(--amber);
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  border-radius: 4px;
+  background: #121517;
+}
+
+.details {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(260px, 0.65fr) minmax(0, 1.3fr);
+  gap: 14px;
+}
+
+.detail-block {
+  padding: 14px;
+  min-width: 0;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 10px 14px;
+  margin: 14px 0 0;
+}
+
+dt {
+  color: var(--muted);
+}
+
+dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.events {
+  display: grid;
+  gap: 8px;
+  max-height: 330px;
+  overflow: auto;
+  margin: 14px 0 0;
+  padding-left: 20px;
+}
+
+.events li {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel-2);
+  color: #d9e0e3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.positive {
+  color: var(--green);
+}
+
+.negative {
+  color: var(--red);
+}
+
+.neutral {
+  color: var(--amber);
+}
+
+@media (max-width: 980px) {
+  .controls,
+  .metrics,
+  .workspace,
+  .details {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .price-panel,
+  .detail-block {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .tracker-head,
+  .tracker-actions,
+  .account-head,
+  .market-search-row,
+  .custom-coin-row {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .controls,
+  .account-grid,
+  .metrics,
+  .workspace,
+  .details {
+    grid-template-columns: 1fr;
+  }
+
+  button {
+    min-width: 0;
+  }
+}
