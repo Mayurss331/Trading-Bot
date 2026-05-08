@@ -1,0 +1,7 @@
+Strategy,CAGR %,Vol %,Sharpe,Sortino,MaxDD %,Calmar,WinRate %
+Momentum (6-12M),2.59,7.5,0.379,0.723,-13.06,0.198,54.7
+Value-Quality,6.04,4.63,1.247,1.901,-10.91,0.554,63.6
+Sector Rotation,5.14,15.77,0.392,0.325,-24.63,0.209,64.5
+Hybrid Momentum-Quality,2.82,4.13,0.696,1.113,-6.1,0.463,65.1
+52W High + Regime Filter,0.43,6.47,0.098,0.157,-16.89,0.025,48.1
+Nifty 50 (Benchmark),8.49,3.99,1.996,3.538,-6.71,1.266,67.2

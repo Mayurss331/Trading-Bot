@@ -1,0 +1,7 @@
+Strategy,Start ₹,Final ₹,Gain ₹,Return %,Max DD %,Win Rate %
+Momentum,10000,9933.04,-66.96,-0.67,-0.67,0.0
+Value-Quality,10000,9926.82,-73.18,-0.73,-0.99,27.3
+Sector Rotation,10000,10415.13,415.13,4.15,-13.98,63.6
+Hybrid Mom-Quality,10000,10025.38,25.38,0.25,-0.38,18.2
+52W High + Regime,10000,9925.01,-74.99,-0.75,-0.75,9.1
+Nifty 50 (Benchmark),10000,9729.19,-270.81,-2.71,-5.13,63.6
