@@ -4,25 +4,42 @@ from collections.abc import Callable
 
 import pandas as pd
 
-from . import arbitrage, confluence, mean_reversion, trend_following
+from . import (
+    arbitrage,
+    confluence,
+    funding_basis,
+    mean_reversion,
+    mixed_consensus,
+    pairs_stat_arb,
+    trend_following,
+    volatility_squeeze,
+)
 from .base import StrategyContext
 
 
 StrategyFn = Callable[[pd.DataFrame, StrategyContext], dict]
 
-
+# Sorted alphabetically by strategy ID
 STRATEGIES: dict[str, StrategyFn] = {
-    confluence.META.id: confluence.analyze,
-    trend_following.META.id: trend_following.analyze,
-    mean_reversion.META.id: mean_reversion.analyze,
     arbitrage.META.id: arbitrage.analyze,
+    confluence.META.id: confluence.analyze,
+    funding_basis.META.id: funding_basis.analyze,
+    mean_reversion.META.id: mean_reversion.analyze,
+    mixed_consensus.META.id: mixed_consensus.analyze,
+    pairs_stat_arb.META.id: pairs_stat_arb.analyze,
+    trend_following.META.id: trend_following.analyze,
+    volatility_squeeze.META.id: volatility_squeeze.analyze,
 }
 
 METAS = {
-    confluence.META.id: confluence.META,
-    trend_following.META.id: trend_following.META,
-    mean_reversion.META.id: mean_reversion.META,
     arbitrage.META.id: arbitrage.META,
+    confluence.META.id: confluence.META,
+    funding_basis.META.id: funding_basis.META,
+    mean_reversion.META.id: mean_reversion.META,
+    mixed_consensus.META.id: mixed_consensus.META,
+    pairs_stat_arb.META.id: pairs_stat_arb.META,
+    trend_following.META.id: trend_following.META,
+    volatility_squeeze.META.id: volatility_squeeze.META,
 }
 
 

@@ -66,6 +66,8 @@ const el = {
   chainSelect:   $('chainSelect'),
   journalBody:   $('journalBody'),
   refreshJournal:$('refreshJournalButton'),
+  pair2:         $('pair2Input'),
+  market2:       $('market2Input'),
 };
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
@@ -315,13 +317,16 @@ async function loadSnapshot() {
   const mode     = el.mode.value || 'futures';
   const risk     = parseFloat(el.risk.value) || 10;
   const lookback = parseInt(el.lookback.value) || 3;
+  const pair2    = el.pair2?.value?.trim() || '';
+  const market2  = el.market2?.value?.trim() || '';
 
   let data;
   try {
-    const res = await fetch(
-      `/api/snapshot?pair=${encodeURIComponent(pair)}&market=${encodeURIComponent(market)}` +
-      `&strategy=${strategy}&mode=${mode}&risk=${risk}&lookback_days=${lookback}`
-    );
+    let url = `/api/snapshot?pair=${encodeURIComponent(pair)}&market=${encodeURIComponent(market)}` +
+      `&strategy=${strategy}&mode=${mode}&risk=${risk}&lookback_days=${lookback}`;
+    if (pair2) url += `&pair2=${encodeURIComponent(pair2)}`;
+    if (market2) url += `&market2=${encodeURIComponent(market2)}`;
+    const res = await fetch(url);
     data = await res.json();
   } catch (err) {
     console.error('Snapshot fetch failed', err);
@@ -659,6 +664,16 @@ function wireEvents() {
   [el.pair, el.market].forEach(inp => inp.addEventListener('keydown', e => {
     if (e.key === 'Enter') loadSnapshot();
   }));
+
+  // Show/hide pair2 fields based on strategy
+  function togglePair2Fields() {
+    const show = el.strategy.value === 'pairs_stat_arb';
+    document.querySelectorAll('.pair2-field').forEach(f => {
+      f.style.display = show ? '' : 'none';
+    });
+  }
+  el.strategy.addEventListener('change', togglePair2Fields);
+  togglePair2Fields();
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────

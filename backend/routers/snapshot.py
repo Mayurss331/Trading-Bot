@@ -133,6 +133,7 @@ def _sync_fetch_catalog(force: bool = False) -> list[dict]:
 def _sync_build_snapshot(
     pair: str, market: str, strategy_id: str, mode: str,
     lookback_days: int, limit: int, risk: float,
+    pair2: str | None = None, market2: str | None = None,
 ) -> dict:
     cfg = make_cfg(pair, market, mode, risk, lookback_days)
     bars, latest_closed, used_pair, used_source = bot.fetch_closed_bars(
@@ -157,10 +158,29 @@ def _sync_build_snapshot(
     except Exception:
         pass
 
+    # Secondary bars for pairs_stat_arb scanner
+    pair2_bars = None
+    if strategy_id == "pairs_stat_arb" and pair2:
+        if not market2:
+            market2 = bot.derive_market_from_pair(pair2) or pair2.replace("B-", "").replace("_", "")
+        try:
+            p2_bars, _, _, _ = bot.fetch_closed_bars(
+                pair2, market2, lookback_days=cfg.lookback_days,
+                execution_mode=cfg.execution_mode,
+            )
+            if not p2_bars.empty:
+                pair2_bars = p2_bars
+        except Exception:
+            pass  # pair2_bars stays None; strategy will return WAIT
+
     ctx = StrategyContext(
         pair=pair, market=market, mode=mode, risk=risk,
         allow_shorts=cfg.allow_shorts,
-        extras={"spot_ticker": spot_ticker, "futures_ticker": futures_ticker},
+        extras={
+            "spot_ticker": spot_ticker,
+            "futures_ticker": futures_ticker,
+            "pair2_bars": pair2_bars,
+        },
     )
     analysis = get_strategy(strategy_id)(bars, ctx)
     frame = analysis["frame"]
@@ -230,6 +250,8 @@ async def snapshot(
     lookback_days: int = 3,
     limit: int = 240,
     risk: float = 10.0,
+    pair2: str = "",
+    market2: str = "",
 ) -> JSONResponse:
     if not market:
         market = bot.derive_market_from_pair(pair) or DEFAULT_MARKET
@@ -240,7 +262,8 @@ async def snapshot(
     risk = max(0.01, min(risk, 1_000_000.0))
 
     result = await asyncio.to_thread(
-        _sync_build_snapshot, pair, market, strategy_id, mode, lookback_days, limit, risk
+        _sync_build_snapshot, pair, market, strategy_id, mode, lookback_days, limit, risk,
+        pair2=pair2 or None, market2=market2 or None,
     )
     return JSONResponse(clean(result))
 

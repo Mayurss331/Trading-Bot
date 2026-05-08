@@ -35,6 +35,14 @@
           <span>Risk $</span>
           <input id="riskInput" type="number" min="0.01" step="1" value="10" />
         </label>
+        <label class="ctrl-label pair2-field">
+          <span>Pair 2</span>
+          <input id="pair2Input" placeholder="e.g. B-BTC_USDT" autocomplete="off" />
+        </label>
+        <label class="ctrl-label pair2-field">
+          <span>Market 2</span>
+          <input id="market2Input" placeholder="e.g. BTCUSDT" autocomplete="off" />
+        </label>
       </div>
     </header>
 
@@ -43,10 +51,14 @@
       <label class="ctrl-label">
         <span>Strategy</span>
         <select id="strategyInput">
-          <option value="confluence">Confluence</option>
-          <option value="trend_following">Trend Following</option>
-          <option value="mean_reversion">Mean Reversion</option>
           <option value="arbitrage">Arbitrage Scanner</option>
+          <option value="confluence" selected>Confluence</option>
+          <option value="funding_basis">Funding / Basis</option>
+          <option value="mean_reversion">Mean Reversion</option>
+          <option value="mixed_consensus">Mixed Consensus</option>
+          <option value="pairs_stat_arb">Pairs Scanner</option>
+          <option value="trend_following">Trend Following</option>
+          <option value="volatility_squeeze">Volatility Squeeze</option>
         </select>
       </label>
       <label class="ctrl-label">
