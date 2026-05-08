@@ -4,234 +4,305 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>CoinDCX Bot Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/styles.css" />
+    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
   </head>
   <body>
+
+    <!-- Header -->
     <header class="topbar">
-      <div>
-        <h1>CoinDCX Bot Dashboard</h1>
-        <p id="subtitle">Paper visualization for the confluence strategy</p>
+      <div class="topbar-brand">
+        <h1>CoinDCX Bot</h1>
+        <div class="ws-status" id="wsStatus" title="WebSocket connection">
+          <span class="ws-dot" id="wsDot"></span>
+          <span id="wsLabel">Connecting</span>
+        </div>
       </div>
-      <div class="status-pill" id="connectionStatus">Connecting</div>
-    </header>
 
-    <main>
-      <section class="tracker" aria-label="Futures strategy tracker">
-        <div class="tracker-head">
-          <div>
-            <h2>Futures Tracker</h2>
-            <p>Search CoinDCX futures, select multiple coins, then track them together.</p>
-          </div>
-          <div class="tracker-actions">
-            <button id="startTrackingButton" type="button">Start Tracking</button>
-            <button id="stopTrackingButton" type="button">Stop</button>
-          </div>
-        </div>
-        <div class="market-search-row">
-          <label>
-            <span>Search Available Futures</span>
-            <input id="coinSearchInput" value="" placeholder="Search BTC, ETH, SOL..." autocomplete="off" />
-          </label>
-          <div class="selected-count" id="selectedCount">0 selected</div>
-        </div>
-        <div class="coin-picker" id="coinPicker"></div>
-        <div class="custom-coin-row">
-          <label>
-            <span>Add Coin</span>
-            <input id="customCoinInput" value="" placeholder="e.g. NEAR" autocomplete="off" />
-          </label>
-          <button id="addCoinButton" type="button">Add</button>
-        </div>
-        <div class="tracking-meta" id="trackingMeta">Not tracking yet</div>
-        <div class="tracking-table-wrap">
-          <table class="tracking-table">
-            <thead>
-              <tr>
-                <th>Coin</th>
-                <th>Price</th>
-                <th>Signal</th>
-                <th>Score</th>
-                <th>RSI</th>
-                <th>Position</th>
-                <th>Fresh</th>
-              </tr>
-            </thead>
-            <tbody id="trackingBody">
-              <tr>
-                <td colspan="7">Select coins and start tracking.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="account-panel" aria-label="Wallet and risk controls">
-        <div class="account-head">
-          <div>
-            <h2>Wallet + Risk</h2>
-            <p>Read-only CoinDCX balance and suggested per-trade risk sizing.</p>
-          </div>
-          <button id="refreshAccountButton" type="button">Refresh Wallet</button>
-        </div>
-        <div class="account-grid">
-          <article class="account-box">
-            <span>Available Futures Balance</span>
-            <strong id="walletBalance">--</strong>
-            <small id="walletStatus">Add API keys in .env to view wallet.</small>
-          </article>
-          <article class="account-box">
-            <span>Current Risk</span>
-            <strong id="currentRiskText">--</strong>
-            <small>Used by paper strategy tracking.</small>
-          </article>
-          <article class="account-box risk-box">
-            <span>Suggested Risk</span>
-            <div class="risk-buttons" id="riskButtons"></div>
-            <div class="custom-risk-row">
-              <input id="customRiskInput" type="number" min="0.0001" step="0.01" placeholder="Custom risk" />
-              <button id="applyCustomRiskButton" type="button">Apply</button>
-            </div>
-          </article>
-        </div>
-        <div class="positions-block">
-          <div class="positions-head">
-            <h2>Active Futures Positions</h2>
-            <span id="positionsMeta">--</span>
-          </div>
-          <div class="positions-table-wrap">
-            <table class="positions-table">
-              <thead>
-                <tr>
-                  <th>Coin</th>
-                  <th>Side</th>
-                  <th>Qty</th>
-                  <th>Entry</th>
-                  <th>Mark</th>
-                  <th>SL</th>
-                  <th>TP</th>
-                  <th>PnL</th>
-                </tr>
-              </thead>
-              <tbody id="positionsBody">
-                <tr>
-                  <td colspan="8">No active position data loaded.</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </section>
-
-      <section class="controls" aria-label="Dashboard controls">
-        <label>
+      <div class="topbar-controls">
+        <label class="ctrl-label">
           <span>Pair</span>
           <input id="pairInput" value="B-ETH_USDT" autocomplete="off" />
         </label>
-        <label>
+        <label class="ctrl-label">
           <span>Market</span>
           <input id="marketInput" value="ETHUSDT" autocomplete="off" />
         </label>
-        <label>
-          <span>Strategy</span>
-          <select id="strategyInput">
-            <option value="confluence">Confluence</option>
-            <option value="trend_following">Trend Following</option>
-            <option value="mean_reversion">Mean Reversion</option>
-            <option value="arbitrage">Arbitrage Scanner</option>
-          </select>
-        </label>
-        <label>
-          <span>Mode</span>
-          <select id="modeInput">
-            <option value="spot">Spot</option>
-            <option value="margin">Margin</option>
-            <option value="futures" selected>Futures</option>
-          </select>
-        </label>
-        <label>
-          <span>Risk</span>
+        <label class="ctrl-label">
+          <span>Risk $</span>
           <input id="riskInput" type="number" min="0.01" step="1" value="10" />
         </label>
-        <label>
-          <span>Lookback</span>
-          <input id="lookbackInput" type="number" min="1" max="30" value="3" />
-        </label>
-        <button id="refreshButton" type="button">Refresh</button>
-      </section>
+      </div>
+    </header>
 
-      <section class="metrics" aria-label="Market summary">
-        <article class="metric">
-          <span>Last Price</span>
-          <strong id="lastPrice">--</strong>
-          <small id="changePct">--</small>
-        </article>
-        <article class="metric">
-          <span>Signal</span>
-          <strong id="signalText">--</strong>
-          <small id="signalMeta">--</small>
-        </article>
-        <article class="metric">
-          <span>Score / RSI</span>
-          <strong id="scoreText">--</strong>
-          <small id="rsiText">--</small>
-        </article>
-        <article class="metric">
-          <span>Position</span>
-          <strong id="positionText">--</strong>
-          <small id="positionMeta">--</small>
-        </article>
-      </section>
+    <!-- Controls bar -->
+    <nav class="controls-bar" aria-label="Strategy controls">
+      <label class="ctrl-label">
+        <span>Strategy</span>
+        <select id="strategyInput">
+          <option value="confluence">Confluence</option>
+          <option value="trend_following">Trend Following</option>
+          <option value="mean_reversion">Mean Reversion</option>
+          <option value="arbitrage">Arbitrage Scanner</option>
+        </select>
+      </label>
+      <label class="ctrl-label">
+        <span>Mode</span>
+        <select id="modeInput">
+          <option value="spot">Spot</option>
+          <option value="margin">Margin</option>
+          <option value="futures" selected>Futures</option>
+        </select>
+      </label>
+      <label class="ctrl-label">
+        <span>Lookback (days)</span>
+        <input id="lookbackInput" type="number" min="1" max="30" value="3" />
+      </label>
+      <button id="refreshButton" type="button" class="btn-primary">Refresh</button>
+      <span class="feed-text" id="feedText">Feed: —</span>
+    </nav>
 
-      <section class="workspace">
-        <div class="chart-panel price-panel">
+    <!-- Metrics strip -->
+    <section class="metrics-row" aria-label="Market summary">
+      <article class="metric-card">
+        <span class="metric-label">Last Price</span>
+        <strong class="metric-value" id="lastPrice">—</strong>
+        <small class="metric-sub" id="changePct">—</small>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Signal</span>
+        <strong class="metric-value" id="signalText">—</strong>
+        <small class="metric-sub" id="signalMeta">—</small>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Score / RSI</span>
+        <strong class="metric-value" id="scoreText">—</strong>
+        <small class="metric-sub" id="rsiText">—</small>
+      </article>
+      <article class="metric-card">
+        <span class="metric-label">Position</span>
+        <strong class="metric-value" id="positionText">—</strong>
+        <small class="metric-sub" id="positionMeta">—</small>
+      </article>
+    </section>
+
+    <!-- Main workspace -->
+    <main class="workspace">
+
+      <!-- Left column: chart + score/rsi + tracker -->
+      <div class="col-left">
+
+        <section class="panel chart-panel" aria-label="Price chart">
           <div class="panel-head">
             <div>
               <h2 id="priceChartTitle">Price + Strategy Line</h2>
-              <p id="feedText">Feed: --</p>
+              <p id="priceChartSub">Candlestick with Supertrend overlay</p>
             </div>
-            <div class="legend">
-              <span><i class="swatch price"></i>Close</span>
-              <span><i class="swatch trend"></i><span id="lineLegend">Strategy Line</span></span>
-            </div>
-          </div>
-          <canvas id="priceChart" height="360"></canvas>
-        </div>
-
-        <div class="chart-panel">
-          <div class="panel-head">
-            <div>
-              <h2 id="scoreChartTitle">Strategy Score</h2>
-              <p id="scoreChartText">Signal score by selected strategy</p>
+            <div class="chart-legend">
+              <span class="legend-item long">Long entry ▲</span>
+              <span class="legend-item short">Short entry ▼</span>
             </div>
           </div>
-          <canvas id="scoreChart" height="180"></canvas>
-        </div>
+          <div id="priceChart" class="lwc-container"></div>
+        </section>
 
-        <div class="chart-panel">
-          <div class="panel-head">
-            <div>
+        <div class="score-rsi-row">
+          <section class="panel score-panel" aria-label="Strategy score">
+            <div class="panel-head">
+              <h2 id="scoreChartTitle">Score</h2>
+              <p id="scoreChartText">—5 to +5 confluence vote</p>
+            </div>
+            <canvas id="scoreChart" height="140"></canvas>
+          </section>
+
+          <section class="panel rsi-panel" aria-label="RSI">
+            <div class="panel-head">
               <h2>RSI</h2>
-              <p>Overheated above 70, washed below 30</p>
+              <p>Overbought above 70 · Oversold below 30</p>
+            </div>
+            <canvas id="rsiChart" height="140"></canvas>
+          </section>
+        </div>
+
+        <!-- Futures Tracker -->
+        <section class="panel tracker-panel" aria-label="Futures strategy tracker">
+          <div class="panel-head tracker-head">
+            <div>
+              <h2>Futures Tracker</h2>
+              <p>Select coins and track confluence signals side-by-side.</p>
+            </div>
+            <div class="tracker-actions">
+              <button id="startTrackingButton" type="button" class="btn-secondary">Track</button>
+              <button id="stopTrackingButton" type="button" class="btn-ghost">Stop</button>
             </div>
           </div>
-          <canvas id="rsiChart" height="180"></canvas>
-        </div>
-      </section>
+          <div class="tracker-inputs">
+            <input id="coinSearchInput" placeholder="Search BTC, ETH, SOL…" autocomplete="off" />
+            <div class="coin-picker" id="coinPicker"></div>
+            <div class="add-coin-row">
+              <input id="customCoinInput" placeholder="e.g. NEAR" autocomplete="off" />
+              <button id="addCoinButton" type="button" class="btn-ghost">Add</button>
+            </div>
+          </div>
+          <p class="tracking-meta" id="trackingMeta">Not tracking yet</p>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Coin</th><th>Price</th><th>Signal</th>
+                  <th>Score</th><th>RSI</th><th>Position</th><th>Fresh</th>
+                </tr>
+              </thead>
+              <tbody id="trackingBody">
+                <tr><td colspan="7" class="empty-row">Select coins and start tracking.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
 
-      <section class="details">
-        <div class="detail-block">
-          <h2>Strategy</h2>
-          <dl id="strategyList"></dl>
-        </div>
-        <div class="detail-block">
-          <h2>Trade State</h2>
-          <dl id="stateList"></dl>
-        </div>
-        <div class="detail-block">
-          <h2>Bot Events</h2>
-          <ol id="eventList" class="events"></ol>
-        </div>
-      </section>
+      </div><!-- /col-left -->
+
+      <!-- Right column: intelligence + wallet + details -->
+      <div class="col-right">
+
+        <!-- Intelligence panel -->
+        <section class="panel intelligence-panel" aria-label="Smart money intelligence">
+          <div class="panel-head">
+            <div>
+              <h2>Smart Money</h2>
+              <p>Binance Web3 signals · refreshed every 60s</p>
+            </div>
+            <div class="chain-select">
+              <select id="chainSelect">
+                <option value="CT_501">Solana</option>
+                <option value="56">BSC</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="intel-sub-head">Signals</div>
+          <div class="table-wrap">
+            <table class="data-table intel-table" id="signalsTable">
+              <thead>
+                <tr>
+                  <th>Token</th><th>Dir</th><th>Wallets</th>
+                  <th>Max Gain</th><th>Exit %</th><th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="signalsBody">
+                <tr><td colspan="6" class="empty-row">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="intel-sub-head" style="margin-top:12px">Smart Money Inflow Rank (24h)</div>
+          <div class="table-wrap">
+            <table class="data-table intel-table" id="rankTable">
+              <thead>
+                <tr>
+                  <th>#</th><th>Token</th><th>Price Chg</th>
+                  <th>Inflow</th><th>Wallets</th>
+                </tr>
+              </thead>
+              <tbody id="rankBody">
+                <tr><td colspan="5" class="empty-row">Loading…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Wallet + Risk -->
+        <section class="panel wallet-panel" aria-label="Wallet and risk controls">
+          <div class="panel-head">
+            <div>
+              <h2>Wallet + Risk</h2>
+              <p>Read-only CoinDCX balance and risk sizing.</p>
+            </div>
+            <button id="refreshAccountButton" type="button" class="btn-ghost">Refresh</button>
+          </div>
+
+          <div class="wallet-grid">
+            <article class="wallet-box">
+              <span>Available Balance</span>
+              <strong id="walletBalance">—</strong>
+              <small id="walletStatus">Add API keys in .env</small>
+            </article>
+            <article class="wallet-box">
+              <span>Current Risk</span>
+              <strong id="currentRiskText">—</strong>
+            </article>
+            <article class="wallet-box risk-box">
+              <span>Suggested Risk</span>
+              <div class="risk-buttons" id="riskButtons"></div>
+              <div class="custom-risk-row">
+                <input id="customRiskInput" type="number" min="0.0001" step="0.01" placeholder="Custom $" />
+                <button id="applyCustomRiskButton" type="button" class="btn-ghost">Apply</button>
+              </div>
+            </article>
+          </div>
+
+          <div class="panel-head" style="margin-top:12px">
+            <h2>Active Positions</h2>
+            <span id="positionsMeta" class="dim">—</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Coin</th><th>Side</th><th>Qty</th>
+                  <th>Entry</th><th>Mark</th><th>SL</th><th>TP</th><th>PnL</th>
+                </tr>
+              </thead>
+              <tbody id="positionsBody">
+                <tr><td colspan="8" class="empty-row">No active positions.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Details: strategy + trade state + events -->
+        <section class="panel details-panel" aria-label="Strategy details">
+          <div class="details-grid">
+            <div class="detail-block">
+              <h2>Strategy</h2>
+              <dl id="strategyList" class="def-list"></dl>
+            </div>
+            <div class="detail-block">
+              <h2>Trade State</h2>
+              <dl id="stateList" class="def-list"></dl>
+            </div>
+            <div class="detail-block events-block">
+              <h2>Bot Events</h2>
+              <ol id="eventList" class="event-list"></ol>
+            </div>
+          </div>
+        </section>
+
+        <!-- Trade Journal -->
+        <section class="panel journal-panel" aria-label="Trade journal">
+          <div class="panel-head">
+            <h2>Trade Journal</h2>
+            <button id="refreshJournalButton" type="button" class="btn-ghost">Refresh</button>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table journal-table">
+              <thead>
+                <tr>
+                  <th>#</th><th>Pair</th><th>Side</th>
+                  <th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th>
+                </tr>
+              </thead>
+              <tbody id="journalBody">
+                <tr><td colspan="7" class="empty-row">No trades logged yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+      </div><!-- /col-right -->
     </main>
 
     <script src="/app.js"></script>

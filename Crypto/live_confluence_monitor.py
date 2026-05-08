@@ -41,11 +41,11 @@ from typing import List, Tuple
 
 import numpy as np
 import pandas as pd
-import pytz
 import requests
+from zoneinfo import ZoneInfo
 
 
-IST = pytz.timezone("Asia/Kolkata")
+IST = ZoneInfo("Asia/Kolkata")
 
 PUBLIC_BASE = "https://public.coindcx.com"
 PRIVATE_BASE = "https://api.coindcx.com"
