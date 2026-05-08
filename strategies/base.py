@@ -18,6 +18,8 @@ class StrategyContext:
     market: str
     mode: str
     risk: float
+    reward_ratio: float
+    leverage: float
     allow_shorts: bool
     extras: dict[str, Any]
 
@@ -40,6 +42,10 @@ class PaperState:
     stop_px: float = np.nan
     target_px: float = np.nan
     qty: float = np.nan
+    risk_per_unit: float = np.nan
+    notional: float = np.nan
+    margin_required: float = np.nan
+    reward_ratio: float = np.nan
     realized_pnl: float = 0.0
 
 
@@ -145,17 +151,23 @@ def risk_per_unit(entry_px: float, stop_px: float) -> float:
     return risk
 
 
-def derive_brackets(side: int, entry_px: float, stop_anchor: float, atr: float | None = None) -> tuple[float, float, float]:
+def derive_brackets(
+    side: int,
+    entry_px: float,
+    stop_anchor: float,
+    atr: float | None = None,
+    reward_ratio: float = 2.0,
+) -> tuple[float, float, float]:
     min_gap = max(abs(entry_px) * 0.001, atr or 0.0, 1e-6)
     if not np.isfinite(stop_anchor):
         stop_anchor = entry_px - min_gap if side == LONG else entry_px + min_gap
     if side == LONG:
         stop_px = stop_anchor if stop_anchor < entry_px else entry_px - max(stop_anchor - entry_px, min_gap)
         risk = risk_per_unit(entry_px, stop_px)
-        return stop_px, entry_px + 2 * risk, risk
+        return stop_px, entry_px + max(reward_ratio, 0.1) * risk, risk
     stop_px = stop_anchor if stop_anchor > entry_px else entry_px + max(entry_px - stop_anchor, min_gap)
     risk = risk_per_unit(entry_px, stop_px)
-    return stop_px, entry_px - 2 * risk, risk
+    return stop_px, entry_px - max(reward_ratio, 0.1) * risk, risk
 
 
 def state_payload(state: PaperState) -> dict[str, Any]:
@@ -167,6 +179,10 @@ def state_payload(state: PaperState) -> dict[str, Any]:
         "stop_px": state.stop_px,
         "target_px": state.target_px,
         "qty": state.qty,
+        "risk_per_unit": state.risk_per_unit,
+        "notional": state.notional,
+        "margin_required": state.margin_required,
+        "reward_ratio": state.reward_ratio,
         "realized_pnl": state.realized_pnl,
         "broker_order_status": None,
         "exit_pending": False,
@@ -176,8 +192,16 @@ def state_payload(state: PaperState) -> dict[str, Any]:
 
 def enter_trade(state: PaperState, side: int, ts: pd.Timestamp, row: pd.Series, ctx: StrategyContext) -> str:
     entry = float(row["Close"])
-    stop, target, risk = derive_brackets(side, entry, float(row.get("st_line", np.nan)), float(row.get("atr", np.nan)))
+    stop, target, risk = derive_brackets(
+        side,
+        entry,
+        float(row.get("st_line", np.nan)),
+        float(row.get("atr", np.nan)),
+        ctx.reward_ratio,
+    )
     qty = ctx.risk / risk if risk > 0 else 0.0
+    notional = qty * entry
+    margin = notional / max(ctx.leverage, 1e-9)
     state.side = side
     state.trade_id += 1
     state.entry_ts = ts
@@ -185,11 +209,15 @@ def enter_trade(state: PaperState, side: int, ts: pd.Timestamp, row: pd.Series, 
     state.stop_px = stop
     state.target_px = target
     state.qty = qty
-    notional = qty * entry
+    state.risk_per_unit = risk
+    state.notional = notional
+    state.margin_required = margin
+    state.reward_ratio = ctx.reward_ratio
     return (
         f"[{fmt_ts(ts)}] ENTRY {fmt_side(side)} | Trade #{state.trade_id} | "
         f"Entry={entry:,.4f} SL={stop:,.4f} Target={target:,.4f} | "
-        f"Qty={qty:,.8f} (Risk ${ctx.risk:.2f}, Notional ${notional:,.2f})"
+        f"Qty={qty:,.8f} (Risk ${ctx.risk:.2f}, R:R 1:{ctx.reward_ratio:.2f}, "
+        f"Notional ${notional:,.2f}, Margin ${margin:,.2f} @ {ctx.leverage:.2f}x)"
     )
 
 

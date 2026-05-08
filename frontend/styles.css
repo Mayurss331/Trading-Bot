@@ -89,7 +89,7 @@ main {
 
 .controls {
   display: grid;
-  grid-template-columns: minmax(150px, 1.2fr) minmax(130px, 1fr) minmax(150px, 1fr) minmax(110px, 0.7fr) minmax(90px, 0.6fr) minmax(100px, 0.6fr) auto;
+  grid-template-columns: minmax(150px, 1.2fr) minmax(130px, 1fr) minmax(150px, 1fr) minmax(110px, 0.7fr) minmax(86px, 0.55fr) minmax(86px, 0.55fr) minmax(92px, 0.55fr) minmax(100px, 0.6fr) auto;
   gap: 10px;
   align-items: end;
 }
@@ -237,7 +237,7 @@ button:hover {
 
 .tracking-table {
   width: 100%;
-  min-width: 760px;
+  min-width: 940px;
   border-collapse: collapse;
   font-size: 13px;
 }

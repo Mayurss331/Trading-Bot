@@ -53,12 +53,14 @@
                 <th>Score</th>
                 <th>RSI</th>
                 <th>Position</th>
+                <th>Margin</th>
+                <th>R:R</th>
                 <th>Fresh</th>
               </tr>
             </thead>
             <tbody id="trackingBody">
               <tr>
-                <td colspan="7">Select coins and start tracking.</td>
+                <td colspan="9">Select coins and start tracking.</td>
               </tr>
             </tbody>
           </table>
@@ -82,7 +84,7 @@
           <article class="account-box">
             <span>Current Risk</span>
             <strong id="currentRiskText">--</strong>
-            <small>Used by paper strategy tracking.</small>
+            <small id="riskModelText">Used by paper strategy tracking.</small>
           </article>
           <article class="account-box risk-box">
             <span>Suggested Risk</span>
@@ -151,6 +153,14 @@
         <label>
           <span>Risk</span>
           <input id="riskInput" type="number" min="0.01" step="1" value="10" />
+        </label>
+        <label>
+          <span>Reward R</span>
+          <input id="rewardInput" type="number" min="0.1" step="0.25" value="2" />
+        </label>
+        <label>
+          <span>Leverage</span>
+          <input id="leverageInput" type="number" min="0.1" step="0.5" value="1" />
         </label>
         <label>
           <span>Lookback</span>

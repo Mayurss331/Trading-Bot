@@ -4,6 +4,8 @@ const els = {
   strategy: document.querySelector("#strategyInput"),
   mode: document.querySelector("#modeInput"),
   risk: document.querySelector("#riskInput"),
+  reward: document.querySelector("#rewardInput"),
+  leverage: document.querySelector("#leverageInput"),
   lookback: document.querySelector("#lookbackInput"),
   refresh: document.querySelector("#refreshButton"),
   status: document.querySelector("#connectionStatus"),
@@ -37,6 +39,7 @@ const els = {
   walletBalance: document.querySelector("#walletBalance"),
   walletStatus: document.querySelector("#walletStatus"),
   currentRiskText: document.querySelector("#currentRiskText"),
+  riskModelText: document.querySelector("#riskModelText"),
   riskButtons: document.querySelector("#riskButtons"),
   customRisk: document.querySelector("#customRiskInput"),
   applyCustomRisk: document.querySelector("#applyCustomRiskButton"),
@@ -56,6 +59,8 @@ let availableCoins = [];
 let selectedCoins = new Set(["BTC", "ETH", "SOL"]);
 let trackingTimer = null;
 let isTracking = false;
+let saveTimer = null;
+let settingsLoaded = false;
 
 function fmtNumber(value, digits = 2) {
   if (value === null || value === undefined || Number.isNaN(Number(value))) return "--";
@@ -289,6 +294,9 @@ function renderState(state) {
     ["Stop", fmtPrice(state.stop_px)],
     ["Target", fmtPrice(state.target_px)],
     ["Quantity", fmtNumber(state.qty, 8)],
+    ["Notional", `$${fmtNumber(state.notional, 2)}`],
+    ["Margin", `$${fmtNumber(state.margin_required, 2)}`],
+    ["Reward", state.reward_ratio ? `1:${fmtNumber(state.reward_ratio, 2)}` : "--"],
     ["Realized PnL", `$${fmtNumber(state.realized_pnl, 2)}`],
     ["Broker", state.broker_order_status || "--"],
   ];
@@ -350,6 +358,7 @@ function renderCoinPicker() {
         selectedCoins.add(coin);
       }
       renderCoinPicker();
+      saveSettingsSoon();
     });
   });
 }
@@ -363,11 +372,12 @@ function addCustomCoin() {
   selectedCoins.add(coin);
   els.customCoin.value = "";
   renderCoinPicker();
+  saveSettingsSoon();
 }
 
 function renderTrackingRows(rows) {
   if (!rows || !rows.length) {
-    els.trackingBody.innerHTML = `<tr><td colspan="7">No coins selected.</td></tr>`;
+    els.trackingBody.innerHTML = `<tr><td colspan="9">No coins selected.</td></tr>`;
     return;
   }
   els.trackingBody.innerHTML = rows
@@ -383,6 +393,8 @@ function renderTrackingRows(rows) {
           <td>${fmtNumber(row.score, 1)}</td>
           <td>${fmtNumber(row.rsi, 1)}</td>
           <td>${row.position || "--"}</td>
+          <td>${fmtNumber(row.margin_required, 2)}</td>
+          <td>${row.reward_ratio ? `1:${fmtNumber(row.reward_ratio, 2)}` : "--"}</td>
           <td>${freshText}</td>
         </tr>
       `;
@@ -419,12 +431,71 @@ function applyRiskAmount(amount) {
   if (!Number.isFinite(risk) || risk <= 0) return;
   els.risk.value = risk.toFixed(4);
   updateRiskText();
+  saveSettingsSoon();
   loadSnapshot();
   if (isTracking) loadTracking();
 }
 
+function collectSettings() {
+  return {
+    pair: els.pair.value,
+    market: els.market.value,
+    mode: els.mode.value,
+    strategy: els.strategy.value,
+    risk: els.risk.value,
+    reward_ratio: els.reward.value,
+    leverage: els.leverage.value,
+    lookback_days: els.lookback.value,
+    selected_coins: [...selectedCoins],
+  };
+}
+
+async function saveSettings() {
+  if (!settingsLoaded) return;
+  try {
+    await fetch("/api/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(collectSettings()),
+    });
+  } catch (error) {
+    console.warn("Could not save settings", error);
+  }
+}
+
+function saveSettingsSoon() {
+  if (!settingsLoaded) return;
+  if (saveTimer) window.clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(saveSettings, 350);
+}
+
+async function loadSettings() {
+  try {
+    const response = await fetch("/api/settings", { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || response.statusText);
+    const settings = data.settings || {};
+    els.pair.value = settings.pair || els.pair.value;
+    els.market.value = settings.market || els.market.value;
+    els.mode.value = settings.mode || els.mode.value;
+    els.strategy.value = settings.strategy || els.strategy.value;
+    els.risk.value = settings.risk || els.risk.value;
+    els.reward.value = settings.reward_ratio || els.reward.value;
+    els.leverage.value = settings.leverage || els.leverage.value;
+    els.lookback.value = settings.lookback_days || els.lookback.value;
+    if (Array.isArray(settings.selected_coins) && settings.selected_coins.length) {
+      selectedCoins = new Set(settings.selected_coins.map((coin) => String(coin).toUpperCase()));
+    }
+  } catch (error) {
+    console.warn("Could not load settings", error);
+  } finally {
+    settingsLoaded = true;
+  }
+}
+
 function updateRiskText() {
   els.currentRiskText.textContent = `$${fmtNumber(els.risk.value, 2)}`;
+  els.riskModelText.textContent = `Target 1:${fmtNumber(els.reward.value, 2)} · margin at ${fmtNumber(els.leverage.value, 2)}x`;
 }
 
 function renderPositions(positions) {
@@ -505,6 +576,8 @@ async function loadTracking() {
     coins: coins.join(","),
     strategy: els.strategy.value,
     risk: els.risk.value,
+    reward_ratio: els.reward.value,
+    leverage: els.leverage.value,
     lookback_days: els.lookback.value,
   });
   els.trackingMeta.textContent = `Tracking ${coins.length} futures coins with ${els.strategy.selectedOptions[0]?.textContent || "strategy"}...`;
@@ -531,6 +604,7 @@ function stopTracking() {
   if (trackingTimer) window.clearInterval(trackingTimer);
   trackingTimer = null;
   els.trackingMeta.textContent = "Tracking stopped.";
+  saveSettingsSoon();
 }
 
 async function loadFuturesMarkets() {
@@ -635,6 +709,8 @@ async function loadSnapshot() {
     strategy: els.strategy.value,
     mode: els.mode.value,
     risk: els.risk.value,
+    reward_ratio: els.reward.value,
+    leverage: els.leverage.value,
     lookback_days: els.lookback.value,
     limit: "260",
   });
@@ -707,7 +783,7 @@ els.customCoin.addEventListener("keydown", (event) => {
 });
 els.startTracking.addEventListener("click", startTracking);
 els.stopTracking.addEventListener("click", stopTracking);
-[els.pair, els.market, els.strategy, els.mode, els.risk, els.lookback].forEach((input) => {
+[els.pair, els.market, els.strategy, els.mode, els.risk, els.reward, els.leverage, els.lookback].forEach((input) => {
   input.addEventListener("change", () => {
     if (liveSource) {
       liveSource.close();
@@ -715,6 +791,7 @@ els.stopTracking.addEventListener("click", stopTracking);
     }
     liveSourceKey = "";
     updateRiskText();
+    saveSettingsSoon();
     loadSnapshot();
     if (isTracking) loadTracking();
   });
@@ -739,7 +816,7 @@ window.addEventListener("resize", () => {
   if (lastSnapshot) render(lastSnapshot);
 });
 
-Promise.all([loadStrategies(), loadFuturesMarkets()]).then(() => {
+Promise.all([loadStrategies(), loadSettings(), loadFuturesMarkets()]).then(() => {
   updateRiskText();
   loadAccount();
   loadSnapshot();

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 import time
 import traceback
@@ -25,6 +26,8 @@ import pandas as pd
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND_DIR = ROOT / "frontend"
+DATA_DIR = ROOT / "data"
+DB_PATH = DATA_DIR / "dashboard.sqlite3"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -74,6 +77,67 @@ DEFAULT_FUTURES_COINS = [
 ]
 FUTURES_CATALOG_CACHE: dict[str, object] = {"ts": 0.0, "coins": []}
 FUTURES_CATALOG_TTL_SECONDS = 600
+DEFAULT_SETTINGS = {
+    "pair": DEFAULT_PAIR,
+    "market": DEFAULT_MARKET,
+    "mode": os.getenv("DEFAULT_MODE", "futures"),
+    "strategy": os.getenv("DEFAULT_STRATEGY", "confluence"),
+    "risk": os.getenv("DEFAULT_RISK", "10"),
+    "reward_ratio": os.getenv("DEFAULT_REWARD_RATIO", "2"),
+    "leverage": os.getenv("DEFAULT_LEVERAGE", "1"),
+    "lookback_days": os.getenv("DEFAULT_LOOKBACK_DAYS", "3"),
+    "selected_coins": "BTC,ETH,SOL",
+}
+
+
+def db_conn() -> sqlite3.Connection:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dashboard_settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    return conn
+
+
+def load_settings() -> dict[str, str]:
+    settings = DEFAULT_SETTINGS.copy()
+    with db_conn() as conn:
+        rows = conn.execute("SELECT key, value FROM dashboard_settings").fetchall()
+    for key, value in rows:
+        if key in settings:
+            settings[key] = value
+    return settings
+
+
+def save_settings(values: dict[str, object]) -> dict[str, str]:
+    allowed = set(DEFAULT_SETTINGS)
+    clean: dict[str, str] = {}
+    for key, value in values.items():
+        if key not in allowed or value is None:
+            continue
+        if key == "selected_coins" and isinstance(value, list):
+            value = ",".join(str(item).upper() for item in value if str(item).strip())
+        clean[key] = str(value)
+
+    if clean:
+        with db_conn() as conn:
+            conn.executemany(
+                """
+                INSERT INTO dashboard_settings(key, value, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET
+                    value=excluded.value,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                list(clean.items()),
+            )
+    return load_settings()
 
 
 def futures_pair_for_coin(coin: str) -> str:
@@ -237,7 +301,7 @@ def _cfg(pair: str, market: str, mode: str, risk: float, lookback_days: int) -> 
         market=market,
         risk_dollars=risk,
         poll_seconds=15,
-        place_orders=False,
+        place_orders=os.getenv("PLACE_ORDERS", "false").lower() == "true",
         allow_shorts=mode in {"margin", "futures"},
         execution_mode=mode,
         leverage=1.0,
@@ -321,6 +385,8 @@ def build_snapshot(query: dict[str, list[str]]) -> dict:
     lookback_days = _int_param(query, "lookback_days", 3, 1, 30)
     limit = _int_param(query, "limit", 240, 60, 1000)
     risk = _float_param(query, "risk", 10.0, 0.01, 1_000_000.0)
+    reward_ratio = _float_param(query, "reward_ratio", 2.0, 0.1, 20.0)
+    leverage = _float_param(query, "leverage", 1.0, 0.1, 125.0)
 
     cfg = _cfg(pair, market, mode, risk, lookback_days)
     bars, latest_closed, used_pair, used_source = bot.fetch_closed_bars(
@@ -357,6 +423,8 @@ def build_snapshot(query: dict[str, list[str]]) -> dict:
         market=market,
         mode=mode,
         risk=risk,
+        reward_ratio=reward_ratio,
+        leverage=leverage,
         allow_shorts=cfg.allow_shorts,
         extras={"spot_ticker": spot_ticker, "futures_ticker": futures_ticker},
     )
@@ -378,6 +446,11 @@ def build_snapshot(query: dict[str, list[str]]) -> dict:
         "pair": pair,
         "market": market,
         "mode": mode,
+        "risk_model": {
+            "risk": risk,
+            "reward_ratio": reward_ratio,
+            "leverage": leverage,
+        },
         "strategy": {
             "id": meta.id,
             "name": meta.name,
@@ -450,6 +523,13 @@ def _track_row_from_snapshot(snapshot: dict) -> dict:
         "side": action.get("side"),
         "position": state.get("side"),
         "pnl": state.get("realized_pnl"),
+        "qty": state.get("qty"),
+        "entry": state.get("entry_px"),
+        "stop": state.get("stop_px"),
+        "target": state.get("target_px"),
+        "notional": state.get("notional"),
+        "margin_required": state.get("margin_required"),
+        "reward_ratio": state.get("reward_ratio"),
         "freshness_minutes": snapshot.get("freshness_minutes"),
         "latest_time": stats.get("latest_time"),
         "message": snapshot.get("message"),
@@ -460,6 +540,8 @@ def build_track(query: dict[str, list[str]]) -> dict:
     raw_coins = _param(query, "coins", "BTC,ETH,SOL")
     strategy_id = normalize_strategy_id(_param(query, "strategy", "confluence"))
     risk = _float_param(query, "risk", 10.0, 0.01, 1_000_000.0)
+    reward_ratio = _float_param(query, "reward_ratio", 2.0, 0.1, 20.0)
+    leverage = _float_param(query, "leverage", 1.0, 0.1, 125.0)
     lookback_days = _int_param(query, "lookback_days", 2, 1, 14)
     coins = []
     for item in raw_coins.replace(" ", "").split(","):
@@ -482,6 +564,8 @@ def build_track(query: dict[str, list[str]]) -> dict:
                     "mode": ["futures"],
                     "strategy": [strategy_id],
                     "risk": [str(risk)],
+                    "reward_ratio": [str(reward_ratio)],
+                    "leverage": [str(leverage)],
                     "lookback_days": [str(lookback_days)],
                     "limit": ["80"],
                 }
@@ -652,6 +736,22 @@ def build_live_quote(query: dict[str, list[str]]) -> dict:
     }
 
 
+def build_settings() -> dict:
+    settings = load_settings()
+    settings["selected_coins"] = [
+        item for item in str(settings.get("selected_coins") or "").split(",") if item
+    ]
+    return {"ok": True, "settings": settings}
+
+
+def update_settings(payload: dict) -> dict:
+    settings = save_settings(payload)
+    settings["selected_coins"] = [
+        item for item in str(settings.get("selected_coins") or "").split(",") if item
+    ]
+    return {"ok": True, "settings": settings}
+
+
 class DashboardHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
@@ -686,6 +786,14 @@ class DashboardHandler(SimpleHTTPRequestHandler):
             except (BrokenPipeError, ConnectionResetError):
                 break
 
+    def _read_json_body(self) -> dict:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            return {}
+        raw = self.rfile.read(length).decode("utf-8")
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
         query = parse_qs(parsed.query)
@@ -704,6 +812,8 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                 self._send_json(build_markets(query))
             elif parsed.path == "/api/account":
                 self._send_json(build_account(query))
+            elif parsed.path == "/api/settings":
+                self._send_json(build_settings())
             elif parsed.path == "/api/live":
                 self._send_sse(query)
             else:
@@ -718,6 +828,20 @@ class DashboardHandler(SimpleHTTPRequestHandler):
                     "error": str(exc),
                     "type": exc.__class__.__name__,
                 },
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+            )
+
+    def do_POST(self) -> None:
+        parsed = urlparse(self.path)
+        try:
+            if parsed.path == "/api/settings":
+                self._send_json(update_settings(self._read_json_body()))
+            else:
+                self._send_json({"ok": False, "error": "not_found"}, status=HTTPStatus.NOT_FOUND)
+        except Exception as exc:
+            traceback.print_exc()
+            self._send_json(
+                {"ok": False, "error": str(exc), "type": exc.__class__.__name__},
                 status=HTTPStatus.INTERNAL_SERVER_ERROR,
             )
 

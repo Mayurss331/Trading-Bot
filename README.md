@@ -136,6 +136,8 @@ The backend exposes:
 - `GET /api/futures-markets`
 - `GET /api/track?coins=BTC,ETH,SOL&strategy=confluence`
 - `GET /api/account?mode=futures`
+- `GET /api/settings`
+- `POST /api/settings`
 - `GET /api/live?pair=B-ETH_USDT&market=ETHUSDT&mode=futures&interval=1`
 - `GET /api/snapshot?pair=B-ETH_USDT&market=ETHUSDT&mode=spot`
 - `GET /api/snapshot?pair=B-ETH_USDT&market=ETHUSDT&mode=futures&strategy=trend_following`
@@ -167,3 +169,16 @@ The Wallet + Risk panel is read-only. When `COINDCX_API_KEY` and
 `COINDCX_API_SECRET` are set in `.env`, it shows available futures wallet
 balance, active futures positions, suggested risk values at 0.25%, 0.5%, 1%,
 and 2% of available balance, plus a custom risk input.
+
+Paper futures sizing uses the selected risk, reward ratio, and leverage:
+
+```text
+quantity = risk / abs(entry - stop)
+target = entry +/- reward_ratio * abs(entry - stop)
+notional = quantity * entry
+required_margin = notional / leverage
+```
+
+Dashboard preferences are stored locally in SQLite at `data/dashboard.sqlite3`.
+The file is ignored by git. It remembers selected coins, strategy, pair/market,
+risk, reward ratio, leverage, mode, and lookback across server restarts.
