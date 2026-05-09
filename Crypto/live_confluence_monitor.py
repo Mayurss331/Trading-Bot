@@ -37,6 +37,7 @@ import json
 import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import List, Tuple
 
 import numpy as np
@@ -59,6 +60,23 @@ LONG_ENTRY_SCORE = 3
 LONG_EXIT_SCORE = 2
 SHORT_ENTRY_SCORE = -3
 SHORT_EXIT_SCORE = -2
+
+
+def _load_env_file(path: Path) -> None:
+    if not path.exists():
+        return
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_env_file(Path(__file__).resolve().parents[1] / ".env")
 
 
 @dataclass
@@ -97,6 +115,26 @@ class TradeState:
     broker_order_status: str | None = None
     exit_pending: bool = False
     position_id: str | None = None
+
+
+@dataclass
+class TradePlan:
+    side: int
+    entry_px: float
+    stop_px: float
+    target_px: float
+    risk_per_unit: float
+    risk_amount: float
+    qty: float
+    notional: float
+    leverage: float
+    margin_required: float
+    support: float | None
+    resistance: float | None
+    rr: float
+    structure_rr: float | None
+    stop_source: str
+    blocked_reason: str | None = None
 
 
 def ema(s: pd.Series, n: int) -> pd.Series:
@@ -664,6 +702,27 @@ def _fmt_side(side: int) -> str:
     return "FLAT"
 
 
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
 def _hmac_signature(payload_json: str, secret: str) -> str:
     return hmac.new(secret.encode("utf-8"), payload_json.encode("utf-8"), hashlib.sha256).hexdigest()
 
@@ -770,6 +829,249 @@ def _risk_per_unit(entry_px: float, stop_px: float) -> float:
 
 def _desired_qty(entry_px: float, stop_px: float, risk_dollars: float) -> float:
     return risk_dollars / _risk_per_unit(entry_px, stop_px)
+
+
+def _effective_leverage(cfg: RuntimeConfig) -> float:
+    max_leverage = max(_env_float("MAX_LEVERAGE", cfg.leverage), 1.0)
+    return max(min(cfg.leverage, max_leverage), 1.0)
+
+
+def _target_from_stop(side: int, entry_px: float, stop_px: float, rr: float) -> float:
+    risk = _risk_per_unit(entry_px, stop_px)
+    return entry_px + rr * risk if side == 1 else entry_px - rr * risk
+
+
+def _finite_price(value: object) -> float | None:
+    try:
+        price = float(value)
+    except Exception:
+        return None
+    return price if np.isfinite(price) and price > 0 else None
+
+
+def _swing_prices(recent: pd.DataFrame, column: str, pivot_span: int, find_high: bool) -> list[tuple[float, int]]:
+    values = [_finite_price(v) for v in recent[column].tolist()]
+    swings: list[tuple[float, int]] = []
+    for i in range(pivot_span, len(values) - pivot_span):
+        price = values[i]
+        if price is None:
+            continue
+        window = [v for v in values[i - pivot_span:i + pivot_span + 1] if v is not None]
+        if len(window) < pivot_span + 1:
+            continue
+        edge_values = [v for j, v in enumerate(window) if j != pivot_span]
+        if find_high and price >= max(window) and price > max(edge_values):
+            swings.append((price, i))
+        elif not find_high and price <= min(window) and price < min(edge_values):
+            swings.append((price, i))
+    return swings
+
+
+def _cluster_structure_zones(
+    recent: pd.DataFrame,
+    swings: list[tuple[float, int]],
+    touch_column: str,
+    tolerance: float,
+    min_touches: int,
+) -> list[dict[str, float]]:
+    if not swings:
+        return []
+
+    clusters: list[dict[str, float]] = []
+    for price, idx in sorted(swings, key=lambda item: item[0]):
+        for cluster in clusters:
+            if abs(price - cluster["level"]) <= tolerance:
+                cluster["weighted_sum"] += price
+                cluster["count"] += 1
+                cluster["latest_idx"] = max(cluster["latest_idx"], idx)
+                cluster["level"] = cluster["weighted_sum"] / cluster["count"]
+                break
+        else:
+            clusters.append({
+                "level": price,
+                "weighted_sum": price,
+                "count": 1,
+                "latest_idx": float(idx),
+            })
+
+    touch_values = [_finite_price(v) for v in recent[touch_column].tolist()]
+    max_idx = max(len(touch_values) - 1, 1)
+    zones: list[dict[str, float]] = []
+    for cluster in clusters:
+        level = cluster["level"]
+        touches = sum(1 for value in touch_values if value is not None and abs(value - level) <= tolerance)
+        if touches < min_touches:
+            continue
+        recency = cluster["latest_idx"] / max_idx
+        zones.append({
+            "level": level,
+            "touches": float(touches),
+            "score": float(touches) + recency,
+        })
+    return zones
+
+
+def _nearest_support_resistance(
+    history: pd.DataFrame | None,
+    entry_px: float,
+    lookback: int,
+    atr: float | None = None,
+) -> tuple[float | None, float | None]:
+    if history is None or history.empty:
+        return None, None
+    recent = history.dropna(subset=["High", "Low"]).tail(max(lookback, 2))
+    if recent.empty:
+        return None, None
+
+    pivot_span = max(_env_int("SUPPORT_RESISTANCE_PIVOT_SPAN", 2), 1)
+    min_touches = max(_env_int("SUPPORT_RESISTANCE_MIN_TOUCHES", 2), 1)
+    zone_pct = max(_env_float("SUPPORT_RESISTANCE_ZONE_PCT", 0.0015), 0.0001)
+    zone_atr = max(_env_float("SUPPORT_RESISTANCE_ZONE_ATR", 0.50), 0.0)
+    min_distance_pct = max(_env_float("SUPPORT_RESISTANCE_MIN_DISTANCE_PCT", 0.0005), 0.0)
+    min_distance_atr = max(_env_float("SUPPORT_RESISTANCE_MIN_DISTANCE_ATR", 0.50), 0.0)
+
+    atr_value = atr if atr is not None and np.isfinite(atr) and atr > 0 else 0.0
+    tolerance = max(entry_px * zone_pct, atr_value * zone_atr, 1e-6)
+    min_distance = max(entry_px * min_distance_pct, atr_value * min_distance_atr, tolerance * 0.5, 1e-6)
+
+    low_swings = _swing_prices(recent, "Low", pivot_span, find_high=False)
+    high_swings = _swing_prices(recent, "High", pivot_span, find_high=True)
+    support_zones = _cluster_structure_zones(recent, low_swings, "Low", tolerance, min_touches)
+    resistance_zones = _cluster_structure_zones(recent, high_swings, "High", tolerance, min_touches)
+
+    support_candidates = [
+        z for z in support_zones
+        if z["level"] < entry_px - min_distance
+    ]
+    resistance_candidates = [
+        z for z in resistance_zones
+        if z["level"] > entry_px + min_distance
+    ]
+
+    support = max(support_candidates, key=lambda z: (z["level"], z["score"]))["level"] if support_candidates else None
+    resistance = min(resistance_candidates, key=lambda z: (z["level"], -z["score"]))["level"] if resistance_candidates else None
+    return support, resistance
+
+
+def _resolve_risk_amount(cfg: RuntimeConfig) -> tuple[float, str | None]:
+    pct = _env_float("RISK_PER_TRADE_PCT", 0.0)
+    if pct <= 0 or not cfg.place_orders:
+        return cfg.risk_dollars, None
+    try:
+        available, currency = fetch_available_quote_balance(cfg)
+    except Exception as exc:
+        return 0.0, f"Could not fetch wallet balance for percent risk sizing: {exc}"
+    if available is None or available <= 0:
+        return 0.0, "Wallet balance unavailable for percent risk sizing."
+    risk_amount = available * (pct / 100.0)
+    max_risk = _env_float("MAX_RISK_PER_TRADE", 0.0)
+    if max_risk > 0:
+        risk_amount = min(risk_amount, max_risk)
+    return risk_amount, f"Risk={pct:.2f}% of available {currency or 'quote'} balance"
+
+
+def _build_trade_plan(
+    side: int,
+    ts: pd.Timestamp,
+    row: pd.Series,
+    history: pd.DataFrame | None,
+    cfg: RuntimeConfig,
+) -> TradePlan:
+    entry = float(row["Close"])
+    st_line = float(row.get("st_line", np.nan))
+    atr = float(row.get("atr", np.nan))
+    if not np.isfinite(atr) or atr <= 0:
+        atr = max(entry * 0.002, 1e-6)
+
+    rr = max(_env_float("RISK_REWARD_RATIO", 2.0), 1.0)
+    min_structure_rr = max(_env_float("MIN_STRUCTURE_RR", 1.5), 0.1)
+    lookback = max(_env_int("SUPPORT_RESISTANCE_LOOKBACK", 72), 10)
+    stop_buffer_atr = max(_env_float("STOP_BUFFER_ATR", 0.25), 0.0)
+    min_stop_pct = max(_env_float("MIN_STOP_PCT", 0.001), 0.0001)
+    min_gap = max(entry * min_stop_pct, atr * 0.10, 1e-6)
+
+    support, resistance = _nearest_support_resistance(history, entry, lookback, atr)
+    risk_amount, risk_msg = _resolve_risk_amount(cfg)
+    if risk_amount <= 0:
+        return TradePlan(side, entry, entry, entry, 0.0, risk_amount, 0.0, 0.0, _effective_leverage(cfg), 0.0,
+                         support, resistance, rr, None, "none", risk_msg or "Risk amount is <= 0")
+
+    stop_source = "mirrored"
+    if side == 1:
+        if support is not None:
+            stop_px = support - atr * stop_buffer_atr
+            stop_source = "support"
+        elif np.isfinite(st_line) and st_line < entry:
+            stop_px = st_line
+            stop_source = "supertrend"
+        else:
+            stop_px = entry - min_gap
+            stop_source = "minimum_gap"
+        if stop_px >= entry:
+            stop_px = entry - min_gap
+            stop_source = "minimum_gap"
+        risk_per_unit = _risk_per_unit(entry, stop_px)
+        target_px = entry + rr * risk_per_unit
+        structure_rr = ((resistance - entry) / risk_per_unit) if resistance is not None else None
+    else:
+        if resistance is not None:
+            stop_px = resistance + atr * stop_buffer_atr
+            stop_source = "resistance"
+        elif np.isfinite(st_line) and st_line > entry:
+            stop_px = st_line
+            stop_source = "supertrend"
+        else:
+            stop_px = entry + min_gap
+            stop_source = "minimum_gap"
+        if stop_px <= entry:
+            stop_px = entry + min_gap
+            stop_source = "minimum_gap"
+        risk_per_unit = _risk_per_unit(entry, stop_px)
+        target_px = entry - rr * risk_per_unit
+        structure_rr = ((entry - support) / risk_per_unit) if support is not None else None
+
+    blocked = None
+    if structure_rr is not None and structure_rr < min_structure_rr:
+        blocked = (
+            f"nearest {'resistance' if side == 1 else 'support'} offers only {structure_rr:.2f}R; "
+            f"minimum required is {min_structure_rr:.2f}R"
+        )
+
+    qty = risk_amount / risk_per_unit if risk_per_unit > 0 else 0.0
+    notional = qty * entry
+    leverage = _effective_leverage(cfg)
+    margin_required = notional / leverage if leverage > 0 else notional
+    return TradePlan(
+        side=side,
+        entry_px=entry,
+        stop_px=stop_px,
+        target_px=target_px,
+        risk_per_unit=risk_per_unit,
+        risk_amount=risk_amount,
+        qty=qty,
+        notional=notional,
+        leverage=leverage,
+        margin_required=margin_required,
+        support=support,
+        resistance=resistance,
+        rr=rr,
+        structure_rr=structure_rr,
+        stop_source=stop_source,
+        blocked_reason=blocked,
+    )
+
+
+def _plan_summary(plan: TradePlan) -> str:
+    support = f"{plan.support:,.4f}" if plan.support is not None else "n/a"
+    resistance = f"{plan.resistance:,.4f}" if plan.resistance is not None else "n/a"
+    structure_rr = f"{plan.structure_rr:.2f}R" if plan.structure_rr is not None else "n/a"
+    return (
+        f"PLAN {_fmt_side(plan.side)} | Entry={plan.entry_px:,.4f} SL={plan.stop_px:,.4f} "
+        f"Target={plan.target_px:,.4f} RR=1:{plan.rr:.2f} Qty={plan.qty:,.8f} "
+        f"Notional=${plan.notional:,.2f} Margin~${plan.margin_required:,.2f} Lev={plan.leverage:.2f}x "
+        f"Risk=${plan.risk_amount:,.2f} Support={support} Resistance={resistance} "
+        f"StructureRR={structure_rr} StopSource={plan.stop_source}"
+    )
 
 
 def _derive_brackets_with_meta(
@@ -949,10 +1251,10 @@ def _cap_entry_qty(side: int, desired_qty: float, price: float, cfg: RuntimeConf
         return 0.0, "Could not determine available quote balance for live sizing."
 
     if cfg.execution_mode == "margin":
-        max_notional = available_quote * max(cfg.leverage, 1.0)
+        max_notional = available_quote * _effective_leverage(cfg)
     elif cfg.execution_mode == "futures":
         instrument = fetch_futures_instrument_details(cfg.pair, cfg.futures_margin_currency)
-        max_notional = available_quote * max(cfg.leverage, 1.0)
+        max_notional = available_quote * _effective_leverage(cfg)
         max_qty = max_notional / price if price > 0 else 0.0
         max_qty = min(max_qty, float(instrument.get("max_market_order_quantity") or max_qty))
         qty_increment = float(instrument.get("quantity_increment") or 0.0)
@@ -978,7 +1280,7 @@ def _cap_entry_qty(side: int, desired_qty: float, price: float, cfg: RuntimeConf
             return (
                 capped_qty,
                 f"Qty capped by available {quote} futures wallet balance: desired={desired_qty:,.8f}, "
-                f"capped={capped_qty:,.8f}, available={available_quote:,.4f} {quote}, leverage={cfg.leverage:.2f}x.",
+                f"capped={capped_qty:,.8f}, available={available_quote:,.4f} {quote}, leverage={_effective_leverage(cfg):.2f}x.",
             )
         return capped_qty, None
     else:
@@ -1267,17 +1569,20 @@ def _enter_trade(
     st_line: float,
     risk_dollars: float,
     qty_override: float | None = None,
+    stop_override: float | None = None,
+    target_override: float | None = None,
 ) -> str:
-    risk_per_unit = _risk_per_unit(px, st_line)
+    stop_px = stop_override if stop_override is not None else st_line
+    risk_per_unit = _risk_per_unit(px, stop_px)
     qty = qty_override if qty_override is not None else risk_dollars / risk_per_unit
-    target = px + 2 * risk_per_unit if side == 1 else px - 2 * risk_per_unit
+    target = target_override if target_override is not None else (px + 2 * risk_per_unit if side == 1 else px - 2 * risk_per_unit)
     notional = qty * px
 
     state.side = side
     state.trade_id += 1
     state.entry_ts = ts
     state.entry_px = px
-    state.stop_px = st_line
+    state.stop_px = stop_px
     state.target_px = target
     state.qty = qty
     state.init_risk_per_unit = risk_per_unit
@@ -1401,7 +1706,13 @@ def sync_futures_position_state(ts: pd.Timestamp, state: TradeState, cfg: Runtim
     return events
 
 
-def process_closed_bar_futures(ts: pd.Timestamp, row: pd.Series, state: TradeState, cfg: RuntimeConfig) -> List[str]:
+def process_closed_bar_futures(
+    ts: pd.Timestamp,
+    row: pd.Series,
+    state: TradeState,
+    cfg: RuntimeConfig,
+    history: pd.DataFrame | None = None,
+) -> List[str]:
     score = int(row["score"])
     close = float(row["Close"])
     high = float(row["High"])
@@ -1410,7 +1721,7 @@ def process_closed_bar_futures(ts: pd.Timestamp, row: pd.Series, state: TradeSta
     events: List[str] = []
 
     if not cfg.place_orders:
-        return process_closed_bar(ts, row, state, RuntimeConfig(**{**cfg.__dict__, "execution_mode": "spot"}))
+        return process_closed_bar(ts, row, state, RuntimeConfig(**{**cfg.__dict__, "execution_mode": "spot"}), history)
 
     if state.side == 0:
         signal_side = 0
@@ -1424,24 +1735,25 @@ def process_closed_bar_futures(ts: pd.Timestamp, row: pd.Series, state: TradeSta
         if signal_side == 0:
             return events
 
-        preview_brackets_meta = _derive_brackets_with_meta(signal_side, close, st_line)
-        preview_brackets = (
-            preview_brackets_meta[:3] if preview_brackets_meta is not None else None
-        )
-        if preview_brackets is None:
+        plan = _build_trade_plan(signal_side, ts, row, history, cfg)
+        events.append(f"[{_fmt_ts(ts)}] {_plan_summary(plan)}")
+        if plan.blocked_reason:
             events.append(
                 f"[{_fmt_ts(ts)}] {_fmt_side(signal_side)} ENTRY BLOCKED | "
-                f"invalid strategy brackets Entry={close:,.4f} StopAnchor={st_line:,.4f}"
+                f"{plan.blocked_reason}"
             )
             return events
 
-        desired_qty = _desired_qty(close, st_line, cfg.risk_dollars)
-        entry_qty, cap_msg = _cap_entry_qty(signal_side, desired_qty, close, cfg)
+        entry_qty, cap_msg = _cap_entry_qty(signal_side, plan.qty, close, cfg)
         if entry_qty <= 0:
             events.append(
                 f"[{_fmt_ts(ts)}] {_fmt_side(signal_side)} ENTRY BLOCKED | {cap_msg or 'qty <= 0'}"
             )
             return events
+        if abs(entry_qty - plan.qty) > 1e-12:
+            plan.qty = entry_qty
+            plan.notional = plan.qty * plan.entry_px
+            plan.margin_required = plan.notional / plan.leverage if plan.leverage > 0 else plan.notional
 
         preview = TradeState(
             side=state.side,
@@ -1455,18 +1767,22 @@ def process_closed_bar_futures(ts: pd.Timestamp, row: pd.Series, state: TradeSta
             realized_pnl=state.realized_pnl,
             position_id=state.position_id,
         )
-        enter_msg = _enter_trade(preview, signal_side, ts, close, st_line, cfg.risk_dollars, qty_override=entry_qty)
+        enter_msg = _enter_trade(
+            preview,
+            signal_side,
+            ts,
+            close,
+            st_line,
+            plan.risk_amount,
+            qty_override=entry_qty,
+            stop_override=plan.stop_px,
+            target_override=plan.target_px,
+        )
         order_side = "buy" if signal_side == 1 else "sell"
         ok, broker_msg, broker_order_id = _place_futures_order(order_side, preview.qty, cfg)
         if not ok:
             events.append(f"[{_fmt_ts(ts)}] {_fmt_side(signal_side)} ENTRY BLOCKED | {broker_msg}")
             return events
-        if preview_brackets_meta and preview_brackets_meta[3] == "mirrored":
-            events.append(
-                f"[{_fmt_ts(ts)}] {_fmt_side(signal_side)} BRACKET FALLBACK | "
-                f"Stop anchor {st_line:,.4f} was on the wrong side of entry {close:,.4f}; "
-                "using mirrored protective stop."
-            )
         state.__dict__.update(preview.__dict__)
         state.broker_order_id = broker_order_id
         state.broker_order_status = "initial" if broker_order_id else None
@@ -1481,7 +1797,14 @@ def process_closed_bar_futures(ts: pd.Timestamp, row: pd.Series, state: TradeSta
                 avg_price = float(position.get("avg_price") or 0.0)
                 if avg_price > 0:
                     state.entry_px = avg_price
-        live_brackets = _derive_brackets(state.side, state.entry_px, st_line)
+        planned_stop = plan.stop_px
+        if state.side == 1 and planned_stop >= state.entry_px:
+            live_brackets = _derive_brackets(state.side, state.entry_px, st_line)
+        elif state.side == -1 and planned_stop <= state.entry_px:
+            live_brackets = _derive_brackets(state.side, state.entry_px, st_line)
+        else:
+            live_target = _target_from_stop(state.side, state.entry_px, planned_stop, plan.rr)
+            live_brackets = (planned_stop, live_target, _risk_per_unit(state.entry_px, planned_stop))
         events.append(enter_msg)
         if cap_msg:
             events.append(f"[{_fmt_ts(ts)}] {cap_msg}")
@@ -1590,9 +1913,15 @@ def process_closed_bar_futures(ts: pd.Timestamp, row: pd.Series, state: TradeSta
     return events
 
 
-def process_closed_bar(ts: pd.Timestamp, row: pd.Series, state: TradeState, cfg: RuntimeConfig) -> List[str]:
+def process_closed_bar(
+    ts: pd.Timestamp,
+    row: pd.Series,
+    state: TradeState,
+    cfg: RuntimeConfig,
+    history: pd.DataFrame | None = None,
+) -> List[str]:
     if cfg.execution_mode == "futures":
-        return process_closed_bar_futures(ts, row, state, cfg)
+        return process_closed_bar_futures(ts, row, state, cfg, history)
 
     score = int(row["score"])
     close = float(row["Close"])
@@ -1953,7 +2282,7 @@ def run_monitor(cfg: RuntimeConfig) -> None:
                 # Bootstrap from history in paper mode only (never submit historical live orders).
                 boot_cfg = RuntimeConfig(**{**cfg.__dict__, "place_orders": False})
                 for ts, row in frame.iterrows():
-                    process_closed_bar(ts, row, state, boot_cfg)
+                    process_closed_bar(ts, row, state, boot_cfg, frame.loc[:ts])
                     last_processed_ts = ts
                 last_row = frame.iloc[-1]
                 print(
@@ -1977,7 +2306,7 @@ def run_monitor(cfg: RuntimeConfig) -> None:
                             print(ev)
                 print_bar_heartbeat(last_processed_ts, last_row, state)
                 if cfg.place_orders:
-                    startup_events = process_closed_bar(last_processed_ts, last_row, state, cfg)
+                    startup_events = process_closed_bar(last_processed_ts, last_row, state, cfg, frame.loc[:last_processed_ts])
                     for ev in startup_events:
                         print(ev)
             else:
@@ -1988,7 +2317,7 @@ def run_monitor(cfg: RuntimeConfig) -> None:
                     for ev in sync_margin_order_state(ts, state, cfg):
                         print(ev)
                     print_bar_heartbeat(ts, row, state)
-                    events = process_closed_bar(ts, row, state, cfg)
+                    events = process_closed_bar(ts, row, state, cfg, frame.loc[:ts])
                     for ev in events:
                         print(ev)
                     last_processed_ts = ts
@@ -2024,6 +2353,18 @@ def parse_args() -> RuntimeConfig:
         help="Execution mode for live orders: auto, spot, margin, or futures (default: auto)",
     )
     parser.add_argument("--leverage", type=float, default=1.0, help="Margin leverage for margin mode (default: 1)")
+    parser.add_argument(
+        "--max-leverage",
+        type=float,
+        default=None,
+        help="Safety cap for live leverage (or use MAX_LEVERAGE env var)",
+    )
+    parser.add_argument(
+        "--risk-reward",
+        type=float,
+        default=None,
+        help="Risk:reward target for planned TP/SL (or use RISK_REWARD_RATIO env var)",
+    )
     parser.add_argument("--margin-ecode", type=str, default="B", help="CoinDCX margin ecode (default: B)")
     parser.add_argument(
         "--futures-margin-currency",
@@ -2046,19 +2387,29 @@ def parse_args() -> RuntimeConfig:
     market = args.market or derive_market_from_pair(args.pair)
     api_key = args.api_key or os.getenv("COINDCX_API_KEY")
     api_secret = args.api_secret or os.getenv("COINDCX_API_SECRET")
+    place_orders = (
+        bool(args.place_orders)
+        or _env_bool("PLACE_ORDERS")
+        or _env_bool("COINDCX_PLACE_ORDERS")
+        or _env_bool("BOT_PLACE_ORDERS")
+    )
     execution_mode = args.execution_mode
     if execution_mode == "auto":
-        execution_mode = "futures" if args.place_orders else "spot"
+        execution_mode = "futures" if place_orders else "spot"
+    max_leverage = args.max_leverage if args.max_leverage is not None else _env_float("MAX_LEVERAGE", float(args.leverage))
+    leverage = min(float(args.leverage), max(max_leverage, 1.0))
+    if args.risk_reward is not None:
+        os.environ["RISK_REWARD_RATIO"] = str(max(float(args.risk_reward), 1.0))
 
     cfg = RuntimeConfig(
         pair=args.pair,
         market=market,
         risk_dollars=float(args.risk),
         poll_seconds=int(args.poll),
-        place_orders=bool(args.place_orders),
+        place_orders=place_orders,
         allow_shorts=bool(args.allow_shorts),
         execution_mode=str(execution_mode),
-        leverage=float(args.leverage),
+        leverage=leverage,
         margin_ecode=str(args.margin_ecode).upper(),
         futures_margin_currency=str(args.futures_margin_currency).upper(),
         position_margin_type=str(args.position_margin_type).lower(),

@@ -15,6 +15,11 @@
     <!-- Header -->
     <header class="topbar">
       <div class="topbar-brand">
+        <button id="menuButton" type="button" class="icon-button menu-button" aria-label="Open menu" aria-controls="sideDrawer" aria-expanded="false">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
         <h1>CoinDCX Bot</h1>
         <div class="ws-status" id="wsStatus" title="WebSocket connection">
           <span class="ws-dot" id="wsDot"></span>
@@ -69,13 +74,59 @@
           <option value="futures" selected>Futures</option>
         </select>
       </label>
+      <label class="execution-toggle" title="Remember whether this dashboard is set to paper mode or real-order intent.">
+        <span class="ctrl-label-text">Execution</span>
+        <span class="switch-row">
+          <input id="realOrdersToggle" type="checkbox" />
+          <span class="switch-track" aria-hidden="true"></span>
+          <strong id="executionModeLabel">Paper only</strong>
+        </span>
+      </label>
       <label class="ctrl-label">
         <span>Lookback (days)</span>
         <input id="lookbackInput" type="number" min="1" max="30" value="3" />
       </label>
       <button id="refreshButton" type="button" class="btn-primary">Refresh</button>
+      
+      <!-- Tracked coins menu -->
+      <div class="tracked-coins-menu" id="trackedCoinsMenu" style="display: none;">
+        <span class="menu-label">Tracking:</span>
+        <div class="coins-menu-items" id="coinsMenuItems"></div>
+      </div>
+
       <span class="feed-text" id="feedText">Feed: —</span>
     </nav>
+
+    <!-- Account overview -->
+    <section class="account-overview" aria-label="Wallet balance and position summary">
+      <article class="account-card account-card-main">
+        <div class="account-card-head">
+          <span class="metric-label">Wallet Balance</span>
+          <button id="refreshAccountButton" type="button" class="btn-ghost">Refresh</button>
+        </div>
+        <strong class="account-value" id="walletBalance">—</strong>
+        <small class="metric-sub" id="walletStatus">Add API keys in .env</small>
+      </article>
+      <article class="account-card">
+        <span class="metric-label">Active Positions</span>
+        <strong class="account-value" id="positionsCount">—</strong>
+        <small class="metric-sub" id="positionsMeta">—</small>
+      </article>
+      <article class="account-card">
+        <span class="metric-label">Unrealized PnL</span>
+        <strong class="account-value" id="accountPnl">—</strong>
+        <small class="metric-sub" id="accountModeText">Futures account</small>
+      </article>
+      <article class="account-card risk-card">
+        <span class="metric-label">Risk / Sizing</span>
+        <strong class="account-value" id="currentRiskText">—</strong>
+        <div class="risk-buttons" id="riskButtons"></div>
+        <div class="custom-risk-row">
+          <input id="customRiskInput" type="number" min="0.0001" step="0.01" placeholder="Custom $" />
+          <button id="applyCustomRiskButton" type="button" class="btn-ghost">Apply</button>
+        </div>
+      </article>
+    </section>
 
     <!-- Metrics strip -->
     <section class="metrics-row" aria-label="Market summary">
@@ -139,46 +190,77 @@
           </section>
         </div>
 
-        <!-- Futures Tracker -->
-        <section class="panel tracker-panel" aria-label="Futures strategy tracker">
-          <div class="panel-head tracker-head">
-            <div>
-              <h2>Futures Tracker</h2>
-              <p>Select coins and track confluence signals side-by-side.</p>
+        <!-- Futures Tracker - Collapsible Side Panel -->
+        <div class="tracker-sidebar" id="trackerSidebar">
+          <button class="tracker-collapse-btn" id="trackerCollapseBtn" title="Toggle tracker panel">
+            <span class="collapse-icon">◀</span>
+          </button>
+          <section class="panel tracker-panel" aria-label="Futures strategy tracker">
+            <div class="panel-head tracker-head">
+              <div>
+                <h2>Futures Tracker</h2>
+                <p>Select coins and track confluence signals side-by-side.</p>
+              </div>
+              <div class="tracker-actions">
+                <button id="startTrackingButton" type="button" class="btn-secondary">Track</button>
+                <button id="stopTrackingButton" type="button" class="btn-ghost">Stop</button>
+              </div>
             </div>
-            <div class="tracker-actions">
-              <button id="startTrackingButton" type="button" class="btn-secondary">Track</button>
-              <button id="stopTrackingButton" type="button" class="btn-ghost">Stop</button>
+            <div class="tracker-inputs">
+              <input id="coinSearchInput" placeholder="Search BTC, ETH, SOL…" autocomplete="off" />
+              <div class="coin-picker" id="coinPicker"></div>
+              <div class="add-coin-row">
+                <input id="customCoinInput" placeholder="e.g. NEAR" autocomplete="off" />
+                <button id="addCoinButton" type="button" class="btn-ghost">Add</button>
+              </div>
             </div>
-          </div>
-          <div class="tracker-inputs">
-            <input id="coinSearchInput" placeholder="Search BTC, ETH, SOL…" autocomplete="off" />
-            <div class="coin-picker" id="coinPicker"></div>
-            <div class="add-coin-row">
-              <input id="customCoinInput" placeholder="e.g. NEAR" autocomplete="off" />
-              <button id="addCoinButton" type="button" class="btn-ghost">Add</button>
+            <p class="tracking-meta" id="trackingMeta">Not tracking yet</p>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Coin</th><th>Price</th><th>Signal</th>
+                    <th>Score</th><th>RSI</th><th>Position</th><th>Fresh</th>
+                  </tr>
+                </thead>
+                <tbody id="trackingBody">
+                  <tr><td colspan="7" class="empty-row">Select coins and start tracking.</td></tr>
+                </tbody>
+              </table>
             </div>
-          </div>
-          <p class="tracking-meta" id="trackingMeta">Not tracking yet</p>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Coin</th><th>Price</th><th>Signal</th>
-                  <th>Score</th><th>RSI</th><th>Position</th><th>Fresh</th>
-                </tr>
-              </thead>
-              <tbody id="trackingBody">
-                <tr><td colspan="7" class="empty-row">Select coins and start tracking.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
+          </section>
+        </div>
 
       </div><!-- /col-left -->
 
-      <!-- Right column: intelligence + wallet + details -->
-      <div class="col-right">
+      <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+
+      <!-- Drawer: intelligence + settings + details -->
+      <aside id="sideDrawer" class="col-right side-drawer" aria-label="Dashboard menu" aria-hidden="true">
+        <div class="drawer-head">
+          <div>
+            <h2>Menu</h2>
+            <p>Settings, intelligence, and bot details.</p>
+          </div>
+          <button id="drawerCloseButton" type="button" class="btn-ghost">Close</button>
+        </div>
+
+        <section class="panel settings-panel" aria-label="Dashboard settings">
+          <div class="panel-head">
+            <div>
+              <h2>Appearance</h2>
+              <p>Theme is remembered with your dashboard preferences.</p>
+            </div>
+          </div>
+          <label class="ctrl-label theme-field">
+            <span>Theme</span>
+            <select id="themeSelect">
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+              <option value="contrast">High Contrast</option>
+            </select>
+          </label>
+        </section>
 
         <!-- Intelligence panel -->
         <section class="panel intelligence-panel" aria-label="Smart money intelligence">
@@ -226,55 +308,6 @@
           </div>
         </section>
 
-        <!-- Wallet + Risk -->
-        <section class="panel wallet-panel" aria-label="Wallet and risk controls">
-          <div class="panel-head">
-            <div>
-              <h2>Wallet + Risk</h2>
-              <p>Read-only CoinDCX balance and risk sizing.</p>
-            </div>
-            <button id="refreshAccountButton" type="button" class="btn-ghost">Refresh</button>
-          </div>
-
-          <div class="wallet-grid">
-            <article class="wallet-box">
-              <span>Available Balance</span>
-              <strong id="walletBalance">—</strong>
-              <small id="walletStatus">Add API keys in .env</small>
-            </article>
-            <article class="wallet-box">
-              <span>Current Risk</span>
-              <strong id="currentRiskText">—</strong>
-            </article>
-            <article class="wallet-box risk-box">
-              <span>Suggested Risk</span>
-              <div class="risk-buttons" id="riskButtons"></div>
-              <div class="custom-risk-row">
-                <input id="customRiskInput" type="number" min="0.0001" step="0.01" placeholder="Custom $" />
-                <button id="applyCustomRiskButton" type="button" class="btn-ghost">Apply</button>
-              </div>
-            </article>
-          </div>
-
-          <div class="panel-head" style="margin-top:12px">
-            <h2>Active Positions</h2>
-            <span id="positionsMeta" class="dim">—</span>
-          </div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Coin</th><th>Side</th><th>Qty</th>
-                  <th>Entry</th><th>Mark</th><th>SL</th><th>TP</th><th>PnL</th>
-                </tr>
-              </thead>
-              <tbody id="positionsBody">
-                <tr><td colspan="8" class="empty-row">No active positions.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
         <!-- Details: strategy + trade state + events -->
         <section class="panel details-panel" aria-label="Strategy details">
           <div class="details-grid">
@@ -314,8 +347,71 @@
           </div>
         </section>
 
-      </div><!-- /col-right -->
+      </aside><!-- /side-drawer -->
     </main>
+
+    <!-- Bottom section: Performance & Logs -->
+    <section class="bottom-section" aria-label="Performance and execution logs">
+      <div class="bottom-grid">
+        <!-- Active Positions -->
+        <section class="panel active-positions-panel" aria-label="Active positions on tracked coins">
+          <div class="panel-head">
+            <h2>Active Positions</h2>
+            <p>Live positions across tracked coins</p>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Coin</th><th>Side</th><th>Qty</th>
+                  <th>Entry</th><th>Mark</th><th>SL</th><th>TP</th><th>PnL</th>
+                </tr>
+              </thead>
+              <tbody id="positionsBody">
+                <tr><td colspan="8" class="empty-row">No active positions on tracked coins.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Performance Stats -->
+        <section class="panel performance-panel" aria-label="Trading performance">
+          <div class="panel-head">
+            <h2>Performance</h2>
+            <p>Win rate and statistics</p>
+          </div>
+          <div class="perf-grid">
+            <div class="perf-stat">
+              <span class="perf-label">Win Rate</span>
+              <strong class="perf-value" id="winRate">—</strong>
+            </div>
+            <div class="perf-stat">
+              <span class="perf-label">Total Trades</span>
+              <strong class="perf-value" id="totalTrades">—</strong>
+            </div>
+            <div class="perf-stat">
+              <span class="perf-label">Profit Factor</span>
+              <strong class="perf-value" id="profitFactor">—</strong>
+            </div>
+            <div class="perf-stat">
+              <span class="perf-label">Max Drawdown</span>
+              <strong class="perf-value" id="maxDrawdown">—</strong>
+            </div>
+          </div>
+        </section>
+
+        <!-- Execution Log -->
+        <section class="panel logs-panel" aria-label="Execution logs">
+          <div class="panel-head">
+            <h2>Execution Log</h2>
+            <p>Recent bot actions</p>
+          </div>
+          <div class="logs-container">
+            <ol id="executionLog" class="log-list"></ol>
+          </div>
+        </section>
+      </div>
+    </section>
 
     <script src="/app.js"></script>
   </body>

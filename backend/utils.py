@@ -13,6 +13,20 @@ DEFAULT_PAIR = os.getenv("DEFAULT_PAIR", "B-ETH_USDT")
 DEFAULT_MARKET = os.getenv("DEFAULT_MARKET", "ETHUSDT")
 
 
+def env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
 # ---------------------------------------------------------------------------
 # JSON serialisation helpers
 # ---------------------------------------------------------------------------
@@ -93,10 +107,10 @@ def make_cfg(pair: str, market: str, mode: str, risk: float, lookback_days: int)
         market=market,
         risk_dollars=risk,
         poll_seconds=15,
-        place_orders=False,
+        place_orders=env_bool("PLACE_ORDERS") or env_bool("COINDCX_PLACE_ORDERS") or env_bool("BOT_PLACE_ORDERS"),
         allow_shorts=mode in {"margin", "futures"},
         execution_mode=mode,
-        leverage=1.0,
+        leverage=max(1.0, min(env_float("LEVERAGE", 1.0), env_float("MAX_LEVERAGE", env_float("LEVERAGE", 1.0)))),
         margin_ecode="B",
         futures_margin_currency="USDT",
         position_margin_type="crossed",

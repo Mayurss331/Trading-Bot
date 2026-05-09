@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -14,6 +15,7 @@ from sqlalchemy import select
 from ..bot_loader import bot, ROOT
 from ..db.database import AsyncSessionLocal
 from ..db.models import Trade
+from ..db.persistence import store_signal_event, store_tracker_signal_events
 from ..utils import (
     bars_payload,
     clean,
@@ -21,12 +23,20 @@ from ..utils import (
     float_param,
     futures_market_for_coin,
     futures_pair_for_coin,
+    env_bool,
     int_param,
     make_cfg,
     str_param,
     DEFAULT_PAIR,
     DEFAULT_MARKET,
 )
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        return default
 
 # Strategies loaded once at module level
 sys.path.insert(0, str(ROOT))
@@ -238,7 +248,13 @@ def _sync_build_snapshot(
 
 @router.get("/api/health")
 async def health() -> JSONResponse:
-    return JSONResponse({"ok": True, "service": "coindcx-dashboard"})
+    return JSONResponse({
+        "ok": True,
+        "service": "coindcx-dashboard",
+        "place_orders": env_bool("PLACE_ORDERS") or env_bool("COINDCX_PLACE_ORDERS") or env_bool("BOT_PLACE_ORDERS"),
+        "background_tracker_enabled": env_bool("BACKGROUND_TRACKER_ENABLED", True),
+        "background_tracker_interval_seconds": max(10, _env_int("BACKGROUND_TRACKER_INTERVAL_SECONDS", 30)),
+    })
 
 
 @router.get("/api/snapshot")
@@ -265,7 +281,9 @@ async def snapshot(
         _sync_build_snapshot, pair, market, strategy_id, mode, lookback_days, limit, risk,
         pair2=pair2 or None, market2=market2 or None,
     )
-    return JSONResponse(clean(result))
+    payload = clean(result)
+    await store_signal_event(payload)
+    return JSONResponse(payload)
 
 
 @router.get("/api/strategies")
@@ -367,11 +385,13 @@ async def track(
         }
 
     rows = await asyncio.gather(*[_fetch_one(c) for c in coin_list], return_exceptions=False)
+    clean_rows = clean(list(rows))
+    await store_tracker_signal_events(clean_rows)
     return JSONResponse(clean({
         "ok": True,
         "mode": "futures",
         "strategy": strategy_id,
-        "tracked": list(rows),
+        "tracked": clean_rows,
         "server_time": pd.Timestamp.now(tz=bot.IST),
     }))
 

@@ -1,10 +1,15 @@
 'use strict';
 
+const EXECUTION_PREF_KEY = 'coindcx-dashboard.execution-mode';
+const DASHBOARD_PREF_KEY = 'coindcx-dashboard.preferences';
+
 // ─── State ───────────────────────────────────────────────────────────────────
 const state = {
   ws: null,
+  wsKey: '',
   wsLastTick: 0,
   wsStaleTimer: null,
+  wsReconnectTimer: null,
   priceChart: null,
   candleSeries: null,
   superSeries: null,
@@ -13,6 +18,11 @@ const state = {
   availableCoins: [],
   intelligenceInterval: null,
   lastSnapshot: null,
+  realOrdersArmed: false,
+  trackingActive: false,
+  trackerCollapsed: false,
+  preferencesSaveTimer: null,
+  theme: 'dark',
 };
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -22,9 +32,18 @@ const el = {
   market:        $('marketInput'),
   strategy:      $('strategyInput'),
   mode:          $('modeInput'),
+  realOrders:    $('realOrdersToggle'),
+  executionModeLabel: $('executionModeLabel'),
   risk:          $('riskInput'),
   lookback:      $('lookbackInput'),
   refresh:       $('refreshButton'),
+  menuButton:    $('menuButton'),
+  sideDrawer:    $('sideDrawer'),
+  drawerBackdrop:$('drawerBackdrop'),
+  drawerClose:   $('drawerCloseButton'),
+  themeSelect:   $('themeSelect'),
+  trackerSidebar:$('trackerSidebar'),
+  trackerCollapse:$('trackerCollapseBtn'),
   feedText:      $('feedText'),
   lastPrice:     $('lastPrice'),
   changePct:     $('changePct'),
@@ -54,6 +73,9 @@ const el = {
   trackingBody:  $('trackingBody'),
   walletBalance: $('walletBalance'),
   walletStatus:  $('walletStatus'),
+  positionsCount:$('positionsCount'),
+  accountPnl:    $('accountPnl'),
+  accountMode:   $('accountModeText'),
   currentRisk:   $('currentRiskText'),
   riskButtons:   $('riskButtons'),
   customRisk:    $('customRiskInput'),
@@ -68,6 +90,8 @@ const el = {
   refreshJournal:$('refreshJournalButton'),
   pair2:         $('pair2Input'),
   market2:       $('market2Input'),
+  trackedCoinsMenu: $('trackedCoinsMenu'),
+  coinsMenuItems: $('coinsMenuItems'),
 };
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
@@ -102,6 +126,188 @@ function fmtTs(iso) {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 }
 
+function currentRiskAmount() {
+  const n = parseFloat(el.risk.value);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function cssVar(name) {
+  return getComputedStyle(document.body).getPropertyValue(name).trim();
+}
+
+function applyTheme(theme) {
+  const allowed = new Set(['dark', 'light', 'contrast']);
+  state.theme = allowed.has(theme) ? theme : 'dark';
+  document.body.dataset.theme = state.theme;
+  if (el.themeSelect) el.themeSelect.value = state.theme;
+
+  if (state.priceChart) {
+    initPriceChart();
+    if (state.lastSnapshot?.bars) {
+      updatePriceChart(state.lastSnapshot.bars);
+      drawScoreChart(state.lastSnapshot.bars);
+      drawRsiChart(state.lastSnapshot.bars);
+    }
+  }
+}
+
+function setDrawerOpen(open) {
+  el.sideDrawer.classList.toggle('open', open);
+  el.sideDrawer.setAttribute('aria-hidden', open ? 'false' : 'true');
+  el.menuButton.setAttribute('aria-expanded', open ? 'true' : 'false');
+  el.drawerBackdrop.hidden = !open;
+  document.body.classList.toggle('drawer-open', open);
+}
+
+function redrawChartsSoon() {
+  setTimeout(() => {
+    if (!state.lastSnapshot?.bars) return;
+    updatePriceChart(state.lastSnapshot.bars);
+    drawScoreChart(state.lastSnapshot.bars);
+    drawRsiChart(state.lastSnapshot.bars);
+  }, 260);
+}
+
+function setTrackerCollapsed(collapsed, persist = false) {
+  state.trackerCollapsed = Boolean(collapsed);
+  const left = document.querySelector('.col-left');
+  left?.classList.toggle('tracker-collapsed', state.trackerCollapsed);
+  el.trackerSidebar?.classList.toggle('collapsed', state.trackerCollapsed);
+  el.trackerCollapse?.setAttribute('aria-expanded', state.trackerCollapsed ? 'false' : 'true');
+  if (persist) saveDashboardPreferences();
+  redrawChartsSoon();
+}
+
+function loadExecutionPreference() {
+  try {
+    state.realOrdersArmed = localStorage.getItem(EXECUTION_PREF_KEY) === 'real';
+  } catch {
+    state.realOrdersArmed = false;
+  }
+  renderExecutionPreference();
+}
+
+function saveExecutionPreference(armed) {
+  state.realOrdersArmed = Boolean(armed);
+  try {
+    localStorage.setItem(EXECUTION_PREF_KEY, state.realOrdersArmed ? 'real' : 'paper');
+  } catch {}
+  renderExecutionPreference();
+  saveDashboardPreferences();
+}
+
+function renderExecutionPreference() {
+  el.realOrders.checked = state.realOrdersArmed;
+  el.executionModeLabel.textContent = state.realOrdersArmed ? 'Real orders armed' : 'Paper only';
+  el.executionModeLabel.className = state.realOrdersArmed ? 'execution-live' : '';
+}
+
+function readDashboardPreferences() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DASHBOARD_PREF_KEY) || '{}');
+    return raw && raw.settings ? raw.settings : raw;
+  } catch {
+    return {};
+  }
+}
+
+function saveDashboardPreferences() {
+  const prefs = {
+    savedAt: new Date().toISOString(),
+    pair: el.pair.value.trim(),
+    market: el.market.value.trim(),
+    strategy: el.strategy.value,
+    mode: el.mode.value,
+    risk: el.risk.value,
+    lookback: el.lookback.value,
+    pair2: el.pair2?.value?.trim() || '',
+    market2: el.market2?.value?.trim() || '',
+    chain: el.chainSelect?.value || 'CT_501',
+    theme: state.theme,
+    selectedCoins: [...state.selectedCoins],
+    trackingActive: state.trackingActive,
+    trackerCollapsed: state.trackerCollapsed,
+    executionMode: state.realOrdersArmed ? 'real' : 'paper',
+  };
+  try {
+    localStorage.setItem(DASHBOARD_PREF_KEY, JSON.stringify({ settings: prefs, savedAt: prefs.savedAt }));
+  } catch {}
+  fetch('/api/settings?key=dashboard', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings: prefs }),
+    keepalive: true,
+  }).catch(() => {});
+}
+
+function scheduleDashboardPreferencesSave() {
+  clearTimeout(state.preferencesSaveTimer);
+  state.preferencesSaveTimer = setTimeout(saveDashboardPreferences, 300);
+}
+
+async function loadDashboardPreferences() {
+  const localPrefs = readDashboardPreferences();
+  try {
+    const res = await fetch('/api/settings?key=dashboard');
+    const data = await res.json();
+    if (data.ok && data.settings && Object.keys(data.settings).length) {
+      const dbSavedAt = Date.parse(data.settings.savedAt || data.updated_at || '') || 0;
+      const localSavedAt = Date.parse(localPrefs.savedAt || '') || 0;
+      if (localSavedAt > dbSavedAt) return localPrefs;
+      return data.settings;
+    }
+  } catch {}
+  return localPrefs;
+}
+
+async function applyRuntimeConfig() {
+  try {
+    const res = await fetch('/api/health');
+    const data = await res.json();
+    if (data.ok && data.place_orders === true) {
+      state.realOrdersArmed = true;
+      renderExecutionPreference();
+    }
+  } catch {}
+}
+
+async function applyDashboardPreferences() {
+  const prefs = await loadDashboardPreferences();
+  const setValue = (node, value) => {
+    if (node && value != null && value !== '') node.value = value;
+  };
+
+  setValue(el.pair, prefs.pair);
+  setValue(el.market, prefs.market);
+  setValue(el.strategy, prefs.strategy);
+  setValue(el.mode, prefs.mode);
+  setValue(el.risk, prefs.risk);
+  setValue(el.lookback, prefs.lookback);
+  setValue(el.pair2, prefs.pair2);
+  setValue(el.market2, prefs.market2);
+  setValue(el.chainSelect, prefs.chain);
+  applyTheme(prefs.theme || state.theme);
+
+  if (prefs.executionMode === 'real' || prefs.executionMode === 'paper') {
+    state.realOrdersArmed = prefs.executionMode === 'real';
+    try {
+      localStorage.setItem(EXECUTION_PREF_KEY, prefs.executionMode);
+    } catch {}
+    renderExecutionPreference();
+  }
+
+  if (Array.isArray(prefs.selectedCoins) && prefs.selectedCoins.length) {
+    state.selectedCoins = new Set(
+      prefs.selectedCoins
+        .map(c => String(c).trim().toUpperCase())
+        .filter(Boolean)
+        .slice(0, 12)
+    );
+  }
+  state.trackingActive = Boolean(prefs.trackingActive);
+  setTrackerCollapsed(Boolean(prefs.trackerCollapsed));
+}
+
 // ─── WebSocket ────────────────────────────────────────────────────────────────
 function setWsStatus(status) {
   el.wsDot.className = `ws-dot ${status}`;
@@ -109,17 +315,36 @@ function setWsStatus(status) {
   el.wsLabel.textContent = labels[status] || 'Connecting';
 }
 
-function connectWebSocket() {
+function currentWebSocketConfig() {
   const pair   = el.pair.value.trim()   || 'B-ETH_USDT';
   const market = el.market.value.trim() || 'ETHUSDT';
   const mode   = el.mode.value || 'futures';
+  const key = `${pair}|${market}|${mode}`;
+  const url = `ws://${location.host}/ws/quotes?pair=${encodeURIComponent(pair)}&market=${encodeURIComponent(market)}&mode=${mode}&interval=3`;
+  return { key, url };
+}
 
-  if (state.ws) { try { state.ws.close(); } catch {} }
+function connectWebSocket(force = false) {
+  const { key, url } = currentWebSocketConfig();
+  const activeStates = new Set([WebSocket.CONNECTING, WebSocket.OPEN]);
+  if (!force && state.ws && state.wsKey === key && activeStates.has(state.ws.readyState)) {
+    return;
+  }
+
+  clearTimeout(state.wsReconnectTimer);
+  state.wsReconnectTimer = null;
+
+  if (state.ws) {
+    const oldWs = state.ws;
+    oldWs.onclose = null;
+    oldWs.onerror = null;
+    try { oldWs.close(); } catch {}
+  }
   setWsStatus('');
 
-  const url = `ws://${location.host}/ws/quotes?pair=${encodeURIComponent(pair)}&market=${encodeURIComponent(market)}&mode=${mode}&interval=3`;
   const ws = new WebSocket(url);
   state.ws = ws;
+  state.wsKey = key;
 
   ws.onopen = () => setWsStatus('live');
 
@@ -156,8 +381,11 @@ function connectWebSocket() {
 
   ws.onerror = () => setWsStatus('error');
   ws.onclose = () => {
+    if (state.ws !== ws) return;
+    state.ws = null;
     setWsStatus('error');
-    setTimeout(connectWebSocket, 5000);
+    clearTimeout(state.wsReconnectTimer);
+    state.wsReconnectTimer = setTimeout(() => connectWebSocket(true), 5000);
   };
 }
 
@@ -179,28 +407,28 @@ function initPriceChart() {
   const container = el.priceChart;
   const chart = LightweightCharts.createChart(container, {
     layout: {
-      background: { color: '#181c22' },
-      textColor: '#5a6270',
+      background: { color: cssVar('--panel') || '#181c22' },
+      textColor: cssVar('--text-dim') || '#5a6270',
     },
     grid: {
-      vertLines: { color: '#1e2430' },
-      horzLines: { color: '#1e2430' },
+      vertLines: { color: cssVar('--border-dim') || '#1e2430' },
+      horzLines: { color: cssVar('--border-dim') || '#1e2430' },
     },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: '#252b34' },
-    timeScale: { borderColor: '#252b34', timeVisible: true, secondsVisible: false },
+    rightPriceScale: { borderColor: cssVar('--border') || '#252b34' },
+    timeScale: { borderColor: cssVar('--border') || '#252b34', timeVisible: true, secondsVisible: false },
     width: container.clientWidth,
     height: container.clientHeight,
   });
 
   const hasNewSeriesApi = typeof chart.addSeries === 'function';
   const candleOptions = {
-    upColor: '#26c485', downColor: '#e05252',
-    borderUpColor: '#26c485', borderDownColor: '#e05252',
-    wickUpColor: '#26c485', wickDownColor: '#e05252',
+    upColor: cssVar('--long') || '#26c485', downColor: cssVar('--short') || '#e05252',
+    borderUpColor: cssVar('--long') || '#26c485', borderDownColor: cssVar('--short') || '#e05252',
+    wickUpColor: cssVar('--long') || '#26c485', wickDownColor: cssVar('--short') || '#e05252',
   };
   const lineOptions = {
-    color: '#5b9cf6', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false,
+    color: cssVar('--neutral') || '#5b9cf6', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false,
   };
 
   if (hasNewSeriesApi && LightweightCharts?.CandlestickSeries && LightweightCharts?.LineSeries) {
@@ -240,21 +468,32 @@ function updatePriceChart(bars) {
 function drawScoreChart(bars) {
   const canvas = el.scoreChart;
   const ctx = canvas.getContext('2d');
-  canvas.width = canvas.offsetWidth;
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const dpr = window.devicePixelRatio || 1;
+  const cssWidth = Math.max(1, canvas.clientWidth || canvas.offsetWidth || 300);
+  const cssHeight = Math.max(1, canvas.clientHeight || canvas.offsetHeight || Number(canvas.getAttribute('height')) || 140);
+  canvas.width = Math.round(cssWidth * dpr);
+  canvas.height = Math.round(cssHeight * dpr);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, cssWidth, cssHeight);
 
-  const scores = bars.map(b => b.score ?? null).filter(s => s != null);
+  const scores = (bars || [])
+    .map(b => b.score ?? b.raw_score)
+    .map(Number)
+    .filter(Number.isFinite);
   if (scores.length === 0) return;
 
-  const W = canvas.width, H = canvas.height;
+  const W = cssWidth, H = cssHeight;
   const SCORE_MIN = -5, SCORE_MAX = 5;
-  const barW = Math.max(1, Math.floor(W / scores.length));
+  const maxVisibleBars = Math.max(1, Math.floor(W / 3));
+  const visibleScores = scores.slice(-maxVisibleBars);
+  const stepW = W / visibleScores.length;
+  const barW = Math.max(1, Math.floor(stepW * 0.72));
   const zeroY = H / 2;
   const scale = H / (SCORE_MAX - SCORE_MIN) / 2;
   const ENTRY_THRESH = 3;
 
   // Threshold lines
-  ctx.strokeStyle = '#252b34';
+  ctx.strokeStyle = cssVar('--border') || '#252b34';
   ctx.setLineDash([3, 3]);
   ctx.lineWidth = 1;
   [ENTRY_THRESH, -ENTRY_THRESH].forEach(s => {
@@ -264,16 +503,21 @@ function drawScoreChart(bars) {
   ctx.setLineDash([]);
 
   // Zero line
-  ctx.strokeStyle = '#1e2430';
+  ctx.strokeStyle = cssVar('--border-dim') || '#1e2430';
   ctx.beginPath(); ctx.moveTo(0, zeroY); ctx.lineTo(W, zeroY); ctx.stroke();
 
   // Bars
-  scores.slice(-Math.floor(W / barW)).forEach((s, i) => {
-    const x = i * barW;
+  visibleScores.forEach((s, i) => {
+    const x = Math.floor(i * stepW);
     const barH = s * scale;
     const y = barH >= 0 ? zeroY - barH : zeroY;
-    ctx.fillStyle = s >= ENTRY_THRESH ? '#26c485' : s <= -ENTRY_THRESH ? '#e05252' : '#3a4250';
-    ctx.fillRect(x, Math.min(y, zeroY), barW - 1, Math.abs(barH));
+    const height = Math.max(1, Math.abs(barH));
+    ctx.fillStyle = s >= ENTRY_THRESH
+      ? cssVar('--long') || '#26c485'
+      : s <= -ENTRY_THRESH
+        ? cssVar('--short') || '#e05252'
+        : cssVar('--text-dim') || '#3a4250';
+    ctx.fillRect(x, Math.min(y, zeroY), barW, height);
   });
 }
 
@@ -296,10 +540,12 @@ function drawRsiChart(bars) {
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
     ctx.setLineDash([]);
   };
-  zone(70, '#e05252'); zone(50, '#252b34'); zone(30, '#26c485');
+  zone(70, cssVar('--short') || '#e05252');
+  zone(50, cssVar('--border') || '#252b34');
+  zone(30, cssVar('--long') || '#26c485');
 
   const step = (W - 2 * pad) / (rsiVals.length - 1);
-  ctx.strokeStyle = '#5b9cf6'; ctx.lineWidth = 1.5;
+  ctx.strokeStyle = cssVar('--neutral') || '#5b9cf6'; ctx.lineWidth = 1.5;
   ctx.beginPath();
   rsiVals.forEach((v, i) => {
     const x = pad + i * step;
@@ -394,6 +640,7 @@ async function loadSnapshot() {
     ['Target', stateData.target_px ? fmtPrice(stateData.target_px) : null],
     ['Qty', stateData.qty ? parseFloat(stateData.qty).toFixed(6) : null],
     ['PnL', stateData.realized_pnl != null ? `$${parseFloat(stateData.realized_pnl).toFixed(2)}` : null],
+    ['Execution', state.realOrdersArmed ? 'Real orders armed' : 'Paper only'],
     ['Broker Status', stateData.broker_order_status],
   ];
   el.stateList.innerHTML = stateItems
@@ -487,14 +734,22 @@ async function loadAccount() {
     if (!data.has_credentials) {
       el.walletBalance.textContent = '—';
       el.walletStatus.textContent = data.message || 'Add API keys in .env';
-      el.currentRisk.textContent = `$${parseFloat(el.risk.value).toFixed(2)}`;
+      el.positionsCount.textContent = '0';
+      el.positionsMeta.textContent = 'No account data';
+      el.accountPnl.textContent = '—';
+      el.accountPnl.className = 'account-value';
+      el.accountMode.textContent = `${mode.toUpperCase()} account`;
+      el.currentRisk.textContent = `$${currentRiskAmount().toFixed(2)}`;
+      el.riskButtons.innerHTML = '';
+      el.positionsBody.innerHTML = '<tr><td colspan="8" class="empty-row">Connect CoinDCX API keys to show active positions.</td></tr>';
       return;
     }
 
     const avail = parseFloat(data.available_quote_balance) || 0;
     el.walletBalance.textContent = `${avail.toFixed(2)} ${data.currency || 'USDT'}`;
-    el.walletStatus.textContent = '';
-    el.currentRisk.textContent = `$${parseFloat(el.risk.value).toFixed(2)}`;
+    el.walletStatus.textContent = `Available ${data.currency || 'USDT'} balance`;
+    el.currentRisk.textContent = `$${currentRiskAmount().toFixed(2)}`;
+    el.accountMode.textContent = `${(data.mode || mode).toUpperCase()} account`;
 
     // Risk buttons
     el.riskButtons.innerHTML = (data.risk_suggestions || []).map(s =>
@@ -504,12 +759,18 @@ async function loadAccount() {
       btn.addEventListener('click', () => {
         el.risk.value = btn.dataset.amount;
         el.currentRisk.textContent = `$${parseFloat(btn.dataset.amount).toFixed(2)}`;
+        saveDashboardPreferences();
       });
     });
 
     // Positions
     const positions = data.positions || [];
+    const totalPnl = positions.reduce((sum, p) => sum + (parseFloat(p.unrealized_pnl) || 0), 0);
+    const pnlCls = totalPnl >= 0 ? 'score-pos' : 'score-neg';
+    el.positionsCount.textContent = String(positions.length);
     el.positionsMeta.textContent = positions.length ? `${positions.length} open` : 'No open positions';
+    el.accountPnl.textContent = positions.length ? `${totalPnl >= 0 ? '+' : ''}${totalPnl.toFixed(2)} ${data.currency || 'USDT'}` : '0.00';
+    el.accountPnl.className = `account-value ${pnlCls}`;
     if (positions.length === 0) {
       el.positionsBody.innerHTML = '<tr><td colspan="8" class="empty-row">No active positions.</td></tr>';
     } else {
@@ -569,6 +830,9 @@ async function loadFuturesMarkets() {
     const res = await fetch('/api/futures-markets');
     const data = await res.json();
     state.availableCoins = (data.coins || []).map(c => c.coin);
+    state.selectedCoins.forEach(coin => {
+      if (!state.availableCoins.includes(coin)) state.availableCoins.push(coin);
+    });
     renderCoinPicker();
   } catch {}
 }
@@ -585,7 +849,9 @@ function renderCoinPicker() {
       const coin = btn.dataset.coin;
       if (state.selectedCoins.has(coin)) state.selectedCoins.delete(coin);
       else if (state.selectedCoins.size < 12) state.selectedCoins.add(coin);
+      saveDashboardPreferences();
       renderCoinPicker();
+      updateTrackedCoinsMenu();
     });
   });
 }
@@ -624,45 +890,183 @@ async function loadTracking() {
 }
 
 function startTracking() {
+  state.trackingActive = true;
+  saveDashboardPreferences();
+  updateTrackedCoinsMenu();
   loadTracking();
   clearInterval(state.trackingInterval);
   state.trackingInterval = setInterval(loadTracking, 15_000);
 }
 
 function stopTracking() {
+  state.trackingActive = false;
+  saveDashboardPreferences();
   clearInterval(state.trackingInterval);
   state.trackingInterval = null;
   el.trackingMeta.textContent = 'Tracking stopped.';
+  updateTrackedCoinsMenu();
+}
+
+function updateTrackedCoinsMenu() {
+  const menu = document.getElementById('trackedCoinsMenu');
+  const items = document.getElementById('coinsMenuItems');
+  
+  if (!menu || !items) return;
+  
+  if (!state.trackingActive || state.selectedCoins.size === 0) {
+    menu.style.display = 'none';
+    return;
+  }
+  
+  menu.style.display = 'flex';
+  
+  const currentPair = el.pair.value.toUpperCase();
+  
+  items.innerHTML = Array.from(state.selectedCoins).map(coin => {
+    // Determine if this coin is currently selected
+    const isActive = currentPair.includes(coin);
+    const activeClass = isActive ? 'active' : '';
+    return `<button class="coin-menu-item ${activeClass}" data-coin="${coin}" title="Switch to ${coin}">${coin}</button>`;
+  }).join('');
+  
+  // Add click handlers to menu items
+  items.querySelectorAll('.coin-menu-item').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const coin = btn.dataset.coin;
+      switchTrackedCoin(coin);
+      
+      // Update active states
+      items.querySelectorAll('.coin-menu-item').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+}
+
+function switchTrackedCoin(coin) {
+  // Map common coin symbols to their pair/market format
+  const coinMap = {
+    'BTC': { pair: 'B-BTC_USDT', market: 'BTCUSDT' },
+    'ETH': { pair: 'B-ETH_USDT', market: 'ETHUSDT' },
+    'SOL': { pair: 'B-SOL_USDT', market: 'SOLUSDT' },
+    'XAU': { pair: 'B-XAU_USDT', market: 'XAUSUSDT' },
+    'BNB': { pair: 'B-BNB_USDT', market: 'BNBUSDT' },
+    'NEAR': { pair: 'B-NEAR_USDT', market: 'NEARUSDT' },
+    'ARB': { pair: 'B-ARB_USDT', market: 'ARBUSDT' },
+    'DOGE': { pair: 'B-DOGE_USDT', market: 'DOGEUSDT' },
+    'XRP': { pair: 'B-XRP_USDT', market: 'XRPUSDT' },
+    'ADA': { pair: 'B-ADA_USDT', market: 'ADAUSDT' },
+  };
+  
+  // Get the mapping or create a default one
+  const mapping = coinMap[coin] || {
+    pair: `B-${coin}_USDT`,
+    market: `${coin}USDT`
+  };
+  
+  // Update inputs
+  el.pair.value = mapping.pair;
+  el.market.value = mapping.market;
+  
+  // Save preferences and reload
+  saveDashboardPreferences();
+  updateTrackedCoinsMenu();
+  loadSnapshot();
+  loadAccount();
 }
 
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 function wireEvents() {
-  el.refresh.addEventListener('click', loadSnapshot);
+  el.menuButton.addEventListener('click', () => setDrawerOpen(true));
+  el.drawerClose.addEventListener('click', () => setDrawerOpen(false));
+  el.drawerBackdrop.addEventListener('click', () => setDrawerOpen(false));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') setDrawerOpen(false);
+  });
+  el.themeSelect.addEventListener('change', () => {
+    applyTheme(el.themeSelect.value);
+    saveDashboardPreferences();
+  });
+
+  el.refresh.addEventListener('click', () => {
+    saveDashboardPreferences();
+    loadSnapshot();
+    loadAccount();
+  });
+  el.realOrders.addEventListener('change', () => {
+    if (el.realOrders.checked) {
+      const confirmed = window.confirm(
+        'Arm real-order intent for this dashboard? This remembers your choice, but live orders still require running the bot with --place-orders.'
+      );
+      if (!confirmed) {
+        el.realOrders.checked = false;
+        saveExecutionPreference(false);
+        return;
+      }
+      saveExecutionPreference(true);
+      return;
+    }
+    saveExecutionPreference(false);
+  });
   el.refreshAccount.addEventListener('click', loadAccount);
   el.refreshJournal.addEventListener('click', loadTradeJournal);
   el.startTracking.addEventListener('click', startTracking);
   el.stopTracking.addEventListener('click', stopTracking);
+  
+  if (el.trackerCollapse) {
+    el.trackerCollapse.addEventListener('click', () => {
+      setTrackerCollapsed(!state.trackerCollapsed, true);
+    });
+  }
+  
   el.addCoin.addEventListener('click', () => {
     const coin = el.customCoin.value.trim().toUpperCase();
     if (coin && state.selectedCoins.size < 12) {
       state.selectedCoins.add(coin);
       if (!state.availableCoins.includes(coin)) state.availableCoins.push(coin);
       el.customCoin.value = '';
+      saveDashboardPreferences();
       renderCoinPicker();
+      updateTrackedCoinsMenu();
     }
   });
   el.coinSearch.addEventListener('input', renderCoinPicker);
   el.applyRisk.addEventListener('click', () => {
     const v = parseFloat(el.customRisk.value);
-    if (v > 0) { el.risk.value = v; el.currentRisk.textContent = `$${v.toFixed(2)}`; }
+    if (v > 0) {
+      el.risk.value = v;
+      el.currentRisk.textContent = `$${v.toFixed(2)}`;
+      saveDashboardPreferences();
+    }
   });
   if (el.chainSelect) {
-    el.chainSelect.addEventListener('change', loadIntelligence);
+    el.chainSelect.addEventListener('change', () => {
+      saveDashboardPreferences();
+      loadIntelligence();
+    });
   }
+
+  [el.pair, el.market, el.strategy, el.mode, el.risk, el.lookback, el.pair2, el.market2]
+    .filter(Boolean)
+    .forEach(input => input.addEventListener('change', saveDashboardPreferences));
+
+  el.risk.addEventListener('input', () => {
+    el.currentRisk.textContent = `$${currentRiskAmount().toFixed(2)}`;
+    scheduleDashboardPreferencesSave();
+  });
+
+  // Update tracked coins menu when pair changes
+  el.pair.addEventListener('change', updateTrackedCoinsMenu);
 
   // Keyboard shortcut: Enter on pair/market inputs triggers refresh
   [el.pair, el.market].forEach(inp => inp.addEventListener('keydown', e => {
-    if (e.key === 'Enter') loadSnapshot();
+    if (e.key === 'Enter') {
+      saveDashboardPreferences();
+      updateTrackedCoinsMenu();
+      loadSnapshot();
+      loadAccount();
+    }
   }));
 
   // Show/hide pair2 fields based on strategy
@@ -672,13 +1076,19 @@ function wireEvents() {
       f.style.display = show ? '' : 'none';
     });
   }
-  el.strategy.addEventListener('change', togglePair2Fields);
+  el.strategy.addEventListener('change', () => {
+    saveDashboardPreferences();
+    togglePair2Fields();
+  });
   togglePair2Fields();
 }
 
 // ─── Init ─────────────────────────────────────────────────────────────────────
 async function init() {
   initPriceChart();
+  loadExecutionPreference();
+  await applyDashboardPreferences();
+  await applyRuntimeConfig();
   wireEvents();
   connectWebSocket();
   startIntelligencePolling();
@@ -687,6 +1097,10 @@ async function init() {
   await loadSnapshot();
   loadAccount();
   loadTradeJournal();
+  if (state.trackingActive) {
+    startTracking();
+    updateTrackedCoinsMenu();
+  }
 }
 
 document.addEventListener('DOMContentLoaded', init);

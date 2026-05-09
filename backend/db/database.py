@@ -22,7 +22,15 @@ async def get_db() -> AsyncSession:
 
 
 async def init_db() -> None:
-    from .models import Candle, StateSnapshot, Trade  # noqa: F401
+    from .models import (  # noqa: F401
+        AccountSnapshot,
+        Candle,
+        PositionSnapshot,
+        SignalEvent,
+        StateSnapshot,
+        Trade,
+        UserSetting,
+    )
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

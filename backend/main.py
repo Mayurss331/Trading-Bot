@@ -10,6 +10,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -41,16 +42,33 @@ def _load_env(path: Path) -> None:
 
 _load_env(ROOT / ".env")
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        return default
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s — %(message)s")
 logger = logging.getLogger(__name__)
 
 # Deferred imports (after env loaded and path set)
 from backend.db.database import init_db  # noqa: E402
 from backend.tasks.candle_store import aggregate_candles  # noqa: E402
+from backend.tasks.background_tracker import scan_saved_tracker_coins  # noqa: E402
 from backend.routers.snapshot import router as snapshot_router  # noqa: E402
 from backend.routers.account import router as account_router  # noqa: E402
 from backend.routers.ws import router as ws_router  # noqa: E402
 from backend.routers.intelligence import router as intelligence_router  # noqa: E402
+from backend.routers.settings import router as settings_router  # noqa: E402
+from backend.routers.history import router as history_router  # noqa: E402
 
 scheduler = AsyncIOScheduler()
 
@@ -63,6 +81,18 @@ async def lifespan(app: FastAPI):
 
     scheduler.add_job(aggregate_candles, "interval", minutes=5, id="candle_store",
                       max_instances=1, coalesce=True)
+    if _env_bool("BACKGROUND_TRACKER_ENABLED", True):
+        tracker_seconds = max(10, _env_int("BACKGROUND_TRACKER_INTERVAL_SECONDS", 30))
+        scheduler.add_job(
+            scan_saved_tracker_coins,
+            "interval",
+            seconds=tracker_seconds,
+            id="background_tracker",
+            max_instances=1,
+            coalesce=True,
+            next_run_time=datetime.now(),
+        )
+        logger.info("Background futures tracker enabled (every %ss).", tracker_seconds)
     scheduler.start()
     logger.info("APScheduler started (candle aggregation every 5 min).")
 
@@ -90,6 +120,8 @@ app.include_router(snapshot_router)
 app.include_router(account_router)
 app.include_router(ws_router)
 app.include_router(intelligence_router)
+app.include_router(settings_router)
+app.include_router(history_router)
 
 # Serve the frontend last (catch-all)
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

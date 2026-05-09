@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from ..bot_loader import bot
+from ..db.persistence import store_account_snapshot
 from ..utils import clean, coin_from_pair, make_cfg, DEFAULT_PAIR, DEFAULT_MARKET
 
 router = APIRouter(tags=["account"])
@@ -93,5 +94,6 @@ async def account(
             "positions": positions,
         }
 
-    result = await asyncio.to_thread(_sync_account)
-    return JSONResponse(clean(result))
+    result = clean(await asyncio.to_thread(_sync_account))
+    await store_account_snapshot(result)
+    return JSONResponse(result)
