@@ -144,10 +144,15 @@ def _sync_build_snapshot(
     pair: str, market: str, strategy_id: str, mode: str,
     lookback_days: int, limit: int, risk: float,
     pair2: str | None = None, market2: str | None = None,
+    timeframe: str | None = None,
 ) -> dict:
-    cfg = make_cfg(pair, market, mode, risk, lookback_days)
+    cfg = make_cfg(pair, market, mode, risk, lookback_days, timeframe=timeframe)
     bars, latest_closed, used_pair, used_source = bot.fetch_closed_bars(
-        cfg.pair, cfg.market, lookback_days=cfg.lookback_days, execution_mode=cfg.execution_mode,
+        cfg.pair,
+        cfg.market,
+        lookback_days=cfg.lookback_days,
+        execution_mode=cfg.execution_mode,
+        timeframe=cfg.timeframe,
     )
     if bars.empty:
         return {
@@ -177,6 +182,7 @@ def _sync_build_snapshot(
             p2_bars, _, _, _ = bot.fetch_closed_bars(
                 pair2, market2, lookback_days=cfg.lookback_days,
                 execution_mode=cfg.execution_mode,
+                timeframe=cfg.timeframe,
             )
             if not p2_bars.empty:
                 pair2_bars = p2_bars
@@ -208,6 +214,7 @@ def _sync_build_snapshot(
         "ok": True,
         "coin": coin_from_pair(pair),
         "pair": pair, "market": market, "mode": mode,
+        "timeframe": cfg.timeframe,
         "strategy": {
             "id": meta.id, "name": meta.name,
             "description": meta.description,
@@ -268,6 +275,7 @@ async def snapshot(
     risk: float = 10.0,
     pair2: str = "",
     market2: str = "",
+    timeframe: str = "",
 ) -> JSONResponse:
     if not market:
         market = bot.derive_market_from_pair(pair) or DEFAULT_MARKET
@@ -276,12 +284,16 @@ async def snapshot(
     lookback_days = max(1, min(lookback_days, 30))
     limit = max(60, min(limit, 1000))
     risk = max(0.01, min(risk, 1_000_000.0))
+    tf, _, _ = bot._normalize_timeframe(timeframe or None)
 
     result = await asyncio.to_thread(
         _sync_build_snapshot, pair, market, strategy_id, mode, lookback_days, limit, risk,
         pair2=pair2 or None, market2=market2 or None,
+        timeframe=tf,
     )
     payload = clean(result)
+    if isinstance(payload, dict):
+        payload["timeframe"] = tf
     await store_signal_event(payload)
     return JSONResponse(payload)
 
@@ -333,10 +345,12 @@ async def track(
     strategy: str = "confluence",
     risk: float = 10.0,
     lookback_days: int = 2,
+    timeframe: str = "",
 ) -> JSONResponse:
     strategy_id = normalize_strategy_id(strategy)
     risk = max(0.01, min(risk, 1_000_000.0))
     lookback_days = max(1, min(lookback_days, 14))
+    tf, _, _ = bot._normalize_timeframe(timeframe or None)
 
     coin_list = []
     for item in coins.replace(" ", "").split(","):
@@ -352,7 +366,15 @@ async def track(
         market = futures_market_for_coin(coin)
         try:
             snap = await asyncio.to_thread(
-                _sync_build_snapshot, pair, market, strategy_id, "futures", lookback_days, 80, risk
+                _sync_build_snapshot,
+                pair,
+                market,
+                strategy_id,
+                "futures",
+                lookback_days,
+                80,
+                risk,
+                timeframe=tf,
             )
         except Exception as exc:
             return {"ok": False, "coin": coin, "pair": pair, "market": market, "message": str(exc)}

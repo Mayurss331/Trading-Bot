@@ -49,13 +49,13 @@ def _normalise_coins(raw: object) -> list[str]:
     return coins
 
 
-def _snapshot_one(coin: str, strategy_id: str, risk: float, lookback_days: int) -> dict:
+def _snapshot_one(coin: str, strategy_id: str, risk: float, lookback_days: int, timeframe: str | None = None) -> dict:
     # Import here to avoid making router import order part of application startup.
     from ..routers.snapshot import _sync_build_snapshot
 
     pair = futures_pair_for_coin(coin)
     market = futures_market_for_coin(coin)
-    snap = _sync_build_snapshot(pair, market, strategy_id, "futures", lookback_days, 80, risk)
+    snap = _sync_build_snapshot(pair, market, strategy_id, "futures", lookback_days, 80, risk, timeframe=timeframe)
     strategy_info = snap.get("strategy") or {}
     stats = snap.get("stats") or {}
     action = snap.get("action") or {}
@@ -85,10 +85,10 @@ def _snapshot_one(coin: str, strategy_id: str, risk: float, lookback_days: int) 
     })
 
 
-def _execute_one(coin: str, risk: float, lookback_days: int) -> list[str]:
+def _execute_one(coin: str, risk: float, lookback_days: int, timeframe: str | None = None) -> list[str]:
     pair = futures_pair_for_coin(coin)
     market = futures_market_for_coin(coin)
-    cfg = make_cfg(pair, market, "futures", risk, lookback_days)
+    cfg = make_cfg(pair, market, "futures", risk, lookback_days, timeframe=timeframe)
     if not cfg.place_orders:
         return []
     cfg.allow_shorts = _env_bool("BACKGROUND_ALLOW_SHORTS", False)
@@ -103,6 +103,7 @@ def _execute_one(coin: str, risk: float, lookback_days: int) -> list[str]:
         cfg.market,
         lookback_days=cfg.lookback_days,
         execution_mode=cfg.execution_mode,
+        timeframe=cfg.timeframe,
     )
     if bars.empty:
         return [f"{pair}: no bars fetched for background execution."]
@@ -143,7 +144,7 @@ def _execute_one(coin: str, risk: float, lookback_days: int) -> list[str]:
     return events
 
 
-async def _execute_saved_tracker_orders(settings: dict, coins: list[str], strategy_id: str, risk: float, lookback_days: int) -> None:
+async def _execute_saved_tracker_orders(settings: dict, coins: list[str], strategy_id: str, risk: float, lookback_days: int, timeframe: str | None = None) -> None:
     if str(settings.get("executionMode") or "").lower() != "real":
         return
     if strategy_id != "confluence":
@@ -155,7 +156,7 @@ async def _execute_saved_tracker_orders(settings: dict, coins: list[str], strate
     max_symbols = max(1, min(int(float(os.getenv("BACKGROUND_EXECUTOR_MAX_SYMBOLS", "3"))), 12))
     for coin in coins[:max_symbols]:
         try:
-            events = await asyncio.to_thread(_execute_one, coin, risk, lookback_days)
+            events = await asyncio.to_thread(_execute_one, coin, risk, lookback_days, timeframe)
             for event in events:
                 logger.info("Background executor: %s", event)
         except Exception as exc:
@@ -180,11 +181,15 @@ async def scan_saved_tracker_coins() -> None:
         lookback_days = max(1, min(int(float(settings.get("lookback") or 2)), 14))
     except (TypeError, ValueError):
         lookback_days = 2
+    try:
+        timeframe, _, _ = bot._normalize_timeframe(settings.get("timeframe") or None)
+    except Exception:
+        timeframe, _, _ = bot._normalize_timeframe(None)
 
     rows: list[dict] = []
     for coin in coins:
         try:
-            rows.append(await asyncio.to_thread(_snapshot_one, coin, strategy_id, risk, lookback_days))
+            rows.append(await asyncio.to_thread(_snapshot_one, coin, strategy_id, risk, lookback_days, timeframe))
         except Exception as exc:
             logger.warning("Background tracker failed for %s: %s", coin, exc)
 
@@ -192,4 +197,4 @@ async def scan_saved_tracker_coins() -> None:
         await store_tracker_signal_events(rows)
         logger.info("Background tracker stored %d signal rows for %s", len(rows), ",".join(coins))
 
-    await _execute_saved_tracker_orders(settings, coins, strategy_id, risk, lookback_days)
+    await _execute_saved_tracker_orders(settings, coins, strategy_id, risk, lookback_days, timeframe)

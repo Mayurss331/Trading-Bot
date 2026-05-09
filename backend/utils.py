@@ -101,7 +101,8 @@ def float_param(query: dict, name: str, default: float, low: float, high: float)
 # Bot config + payload helpers
 # ---------------------------------------------------------------------------
 
-def make_cfg(pair: str, market: str, mode: str, risk: float, lookback_days: int) -> object:
+def make_cfg(pair: str, market: str, mode: str, risk: float, lookback_days: int, timeframe: str | None = None) -> object:
+    tf, _, _ = bot._normalize_timeframe(timeframe)
     return bot.RuntimeConfig(
         pair=pair,
         market=market,
@@ -116,6 +117,7 @@ def make_cfg(pair: str, market: str, mode: str, risk: float, lookback_days: int)
         position_margin_type="crossed",
         qty_precision=6,
         lookback_days=lookback_days,
+        timeframe=tf,
         api_key=os.getenv("COINDCX_API_KEY"),
         api_secret=os.getenv("COINDCX_API_SECRET"),
     )

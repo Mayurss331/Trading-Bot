@@ -23,6 +23,8 @@ const state = {
   trackerCollapsed: false,
   preferencesSaveTimer: null,
   theme: 'dark',
+  targetLine: null,
+  stopLine: null,
 };
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -36,6 +38,7 @@ const el = {
   executionModeLabel: $('executionModeLabel'),
   risk:          $('riskInput'),
   lookback:      $('lookbackInput'),
+  timeframe:     $('timeframeInput'),
   refresh:       $('refreshButton'),
   menuButton:    $('menuButton'),
   sideDrawer:    $('sideDrawer'),
@@ -163,6 +166,7 @@ function redrawChartsSoon() {
   setTimeout(() => {
     if (!state.lastSnapshot?.bars) return;
     updatePriceChart(state.lastSnapshot.bars);
+    updatePositionLines(state.lastSnapshot?.state);
     drawScoreChart(state.lastSnapshot.bars);
     drawRsiChart(state.lastSnapshot.bars);
   }, 260);
@@ -220,6 +224,7 @@ function saveDashboardPreferences() {
     mode: el.mode.value,
     risk: el.risk.value,
     lookback: el.lookback.value,
+    timeframe: el.timeframe?.value || '5m',
     pair2: el.pair2?.value?.trim() || '',
     market2: el.market2?.value?.trim() || '',
     chain: el.chainSelect?.value || 'CT_501',
@@ -283,6 +288,7 @@ async function applyDashboardPreferences() {
   setValue(el.mode, prefs.mode);
   setValue(el.risk, prefs.risk);
   setValue(el.lookback, prefs.lookback);
+  setValue(el.timeframe, prefs.timeframe || '5m');
   setValue(el.pair2, prefs.pair2);
   setValue(el.market2, prefs.market2);
   setValue(el.chainSelect, prefs.chain);
@@ -396,6 +402,8 @@ function initPriceChart() {
     state.priceChart = null;
     state.candleSeries = null;
     state.superSeries = null;
+    state.targetLine = null;
+    state.stopLine = null;
     return;
   }
   if (state.priceChart) {
@@ -403,6 +411,8 @@ function initPriceChart() {
     state.priceChart = null;
     state.candleSeries = null;
     state.superSeries = null;
+    state.targetLine = null;
+    state.stopLine = null;
   }
   const container = el.priceChart;
   const chart = LightweightCharts.createChart(container, {
@@ -444,6 +454,71 @@ function initPriceChart() {
   });
   ro.observe(container);
   state.priceChart = chart;
+}
+
+function clearPositionLines() {
+  if (!state.candleSeries) return;
+  if (state.targetLine) {
+    try { state.candleSeries.removePriceLine(state.targetLine); } catch {}
+    state.targetLine = null;
+  }
+  if (state.stopLine) {
+    try { state.candleSeries.removePriceLine(state.stopLine); } catch {}
+    state.stopLine = null;
+  }
+}
+
+function updatePositionLines(stateData) {
+  if (!state.candleSeries) return;
+  const side = stateData?.side;
+  const stopPx = stateData?.stop_px;
+  const targetPx = stateData?.target_px;
+  if (side !== 'LONG' && side !== 'SHORT') {
+    clearPositionLines();
+    return;
+  }
+  if (!Number.isFinite(parseFloat(stopPx)) || !Number.isFinite(parseFloat(targetPx))) {
+    clearPositionLines();
+    return;
+  }
+
+  const stopColor = side === 'LONG' ? (cssVar('--short') || '#e05252') : (cssVar('--long') || '#26c485');
+  const targetColor = side === 'LONG' ? (cssVar('--long') || '#26c485') : (cssVar('--short') || '#e05252');
+  const lineStyle = LightweightCharts?.LineStyle?.Dashed ?? 2;
+
+  if (!state.stopLine) {
+    try {
+      state.stopLine = state.candleSeries.createPriceLine({
+        price: parseFloat(stopPx),
+        color: stopColor,
+        lineWidth: 2,
+        lineStyle,
+        axisLabelVisible: true,
+        title: 'Stop',
+      });
+    } catch {}
+  } else {
+    try {
+      state.stopLine.applyOptions({ price: parseFloat(stopPx), color: stopColor, title: 'Stop' });
+    } catch {}
+  }
+
+  if (!state.targetLine) {
+    try {
+      state.targetLine = state.candleSeries.createPriceLine({
+        price: parseFloat(targetPx),
+        color: targetColor,
+        lineWidth: 2,
+        lineStyle,
+        axisLabelVisible: true,
+        title: 'Target',
+      });
+    } catch {}
+  } else {
+    try {
+      state.targetLine.applyOptions({ price: parseFloat(targetPx), color: targetColor, title: 'Target' });
+    } catch {}
+  }
 }
 
 function updatePriceChart(bars) {
@@ -563,13 +638,14 @@ async function loadSnapshot() {
   const mode     = el.mode.value || 'futures';
   const risk     = parseFloat(el.risk.value) || 10;
   const lookback = parseInt(el.lookback.value) || 3;
+  const timeframe = el.timeframe?.value || '5m';
   const pair2    = el.pair2?.value?.trim() || '';
   const market2  = el.market2?.value?.trim() || '';
 
   let data;
   try {
     let url = `/api/snapshot?pair=${encodeURIComponent(pair)}&market=${encodeURIComponent(market)}` +
-      `&strategy=${strategy}&mode=${mode}&risk=${risk}&lookback_days=${lookback}`;
+      `&strategy=${strategy}&mode=${mode}&risk=${risk}&lookback_days=${lookback}&timeframe=${encodeURIComponent(timeframe)}`;
     if (pair2) url += `&pair2=${encodeURIComponent(pair2)}`;
     if (market2) url += `&market2=${encodeURIComponent(market2)}`;
     const res = await fetch(url);
@@ -589,13 +665,17 @@ async function loadSnapshot() {
   // Feed / title
   el.feedText.textContent = `Feed: ${data.used_pair || pair} via ${data.used_source || '—'} · ${data.freshness_minutes?.toFixed(1) ?? '?'}m ago`;
   el.priceChartTitle.textContent = `${data.coin || 'Price'} · ${data.strategy?.chart_label || 'Strategy'}`;
-  el.priceChartSub.textContent = `${data.strategy?.name || ''} · ${data.mode?.toUpperCase()}`;
+  const tfLabel = data.timeframe || (el.timeframe?.value || '5m');
+  el.priceChartSub.textContent = `${data.strategy?.name || ''} · ${data.mode?.toUpperCase()} · ${tfLabel}`;
 
   const stats = data.stats || {};
   const action = data.action || {};
   const stateData = data.state || {};
   const score = stats.score ?? null;
   const rsi   = stats.rsi   ?? null;
+  if (data.timeframe && el.timeframe && el.timeframe.value !== data.timeframe) {
+    el.timeframe.value = data.timeframe;
+  }
 
   // Metrics
   el.lastPrice.textContent = fmtPrice(stats.close);
@@ -620,6 +700,7 @@ async function loadSnapshot() {
   // Charts
   const bars = data.bars || [];
   updatePriceChart(bars);
+  updatePositionLines(stateData);
   drawScoreChart(bars);
   drawRsiChart(bars);
 
@@ -861,9 +942,10 @@ async function loadTracking() {
   if (!coins) return;
   const strategy = el.strategy.value || 'confluence';
   const risk = parseFloat(el.risk.value) || 10;
+  const timeframe = el.timeframe?.value || '5m';
   el.trackingMeta.textContent = `Tracking ${state.selectedCoins.size} coin(s)… (last update: ${new Date().toLocaleTimeString()})`;
   try {
-    const res = await fetch(`/api/track?coins=${encodeURIComponent(coins)}&strategy=${strategy}&risk=${risk}&lookback_days=2`);
+    const res = await fetch(`/api/track?coins=${encodeURIComponent(coins)}&strategy=${strategy}&risk=${risk}&lookback_days=2&timeframe=${encodeURIComponent(timeframe)}`);
     const data = await res.json();
     const rows = data.tracked || [];
     if (rows.length === 0) {
@@ -1047,7 +1129,7 @@ function wireEvents() {
     });
   }
 
-  [el.pair, el.market, el.strategy, el.mode, el.risk, el.lookback, el.pair2, el.market2]
+  [el.pair, el.market, el.strategy, el.mode, el.risk, el.lookback, el.timeframe, el.pair2, el.market2]
     .filter(Boolean)
     .forEach(input => input.addEventListener('change', saveDashboardPreferences));
 
@@ -1055,6 +1137,17 @@ function wireEvents() {
     el.currentRisk.textContent = `$${currentRiskAmount().toFixed(2)}`;
     scheduleDashboardPreferencesSave();
   });
+
+  if (el.timeframe) {
+    el.timeframe.addEventListener('change', () => {
+      saveDashboardPreferences();
+      loadSnapshot();
+      loadAccount();
+      if (state.trackingActive) {
+        loadTracking();
+      }
+    });
+  }
 
   // Update tracked coins menu when pair changes
   el.pair.addEventListener('change', updateTrackedCoinsMenu);
