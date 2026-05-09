@@ -69,6 +69,8 @@ from backend.routers.ws import router as ws_router  # noqa: E402
 from backend.routers.intelligence import router as intelligence_router  # noqa: E402
 from backend.routers.settings import router as settings_router  # noqa: E402
 from backend.routers.history import router as history_router  # noqa: E402
+from backend.routers.volatility_scanner import router as volatility_scanner_router  # noqa: E402
+from backend.routers.expert_picks import router as expert_picks_router  # noqa: E402
 
 scheduler = AsyncIOScheduler()
 
@@ -122,6 +124,8 @@ app.include_router(ws_router)
 app.include_router(intelligence_router)
 app.include_router(settings_router)
 app.include_router(history_router)
+app.include_router(volatility_scanner_router)
+app.include_router(expert_picks_router)
 
 # Serve the frontend last (catch-all)
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

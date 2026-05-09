@@ -54,6 +54,12 @@ PRIVATE_BASE = "https://api.coindcx.com"
 TIMEFRAME = "5m"
 BAR_FREQ = "5min"
 BAR_MINUTES = 5
+SUPPORTED_TIMEFRAMES = {
+    "5m": 5,
+    "15m": 15,
+    "1h": 60,
+    "4h": 240,
+}
 MIN_WARMUP_BARS = 30
 
 LONG_ENTRY_SCORE = 3
@@ -94,6 +100,7 @@ class RuntimeConfig:
     position_margin_type: str
     qty_precision: int
     lookback_days: int
+    timeframe: str = TIMEFRAME
     candle_pair: str | None = None
     data_source: str | None = None
     api_key: str | None = None
@@ -129,6 +136,7 @@ class TradePlan:
     notional: float
     leverage: float
     margin_required: float
+    leverage_note: str | None
     support: float | None
     resistance: float | None
     rr: float
@@ -238,9 +246,10 @@ def build_confluence_frame(df: pd.DataFrame) -> pd.DataFrame:
 
     out = df.copy()
     out["st_line"] = st_line
+    out["atr"] = atr_s(df)
     out["score"] = v_st + v_er + v_mc + v_bb + v_rs
     out["rsi"] = rsi
-    out = out.dropna(subset=["st_line", "score", "rsi"])
+    out = out.dropna(subset=["st_line", "score", "rsi", "atr"])
     return out
 
 
@@ -355,14 +364,28 @@ def _futures_resolution(tf: str) -> str:
     raise ValueError(f"Unsupported futures timeframe: {tf}")
 
 
-def _fetch_pair_candles(pair: str, lookback_days: int, limit: int = 1000) -> Tuple[pd.DataFrame, pd.Timestamp]:
+def _normalize_timeframe(tf: str | None) -> tuple[str, str, int]:
+    value = str(tf or TIMEFRAME).strip().lower()
+    if value not in SUPPORTED_TIMEFRAMES:
+        value = TIMEFRAME
+    minutes = SUPPORTED_TIMEFRAMES[value]
+    if minutes < 60:
+        freq = f"{minutes}min"
+    else:
+        hours = minutes // 60
+        freq = f"{hours}h"
+    return value, freq, minutes
+
+
+def _fetch_pair_candles(pair: str, lookback_days: int, limit: int = 1000, timeframe: str = TIMEFRAME) -> Tuple[pd.DataFrame, pd.Timestamp]:
     url = f"{PUBLIC_BASE}/market_data/candles"
     now_utc = pd.Timestamp.now(tz="UTC")
     end_ms = int(now_utc.timestamp() * 1000)
     start_ms = int((now_utc - pd.Timedelta(days=max(1, lookback_days))).timestamp() * 1000)
+    tf, bar_freq, bar_minutes = _normalize_timeframe(timeframe)
     params = {
         "pair": pair,
-        "interval": TIMEFRAME,
+        "interval": tf,
         "limit": min(limit, 1000),
         "startTime": start_ms,
         "endTime": end_ms,
@@ -372,7 +395,7 @@ def _fetch_pair_candles(pair: str, lookback_days: int, limit: int = 1000) -> Tup
     candles = res.json()
 
     now_ist = pd.Timestamp.now(tz=IST)
-    latest_closed_open = now_ist.floor(BAR_FREQ) - pd.Timedelta(minutes=BAR_MINUTES)
+    latest_closed_open = now_ist.floor(bar_freq) - pd.Timedelta(minutes=bar_minutes)
 
     if not candles:
         return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"]), latest_closed_open
@@ -406,16 +429,17 @@ def _fetch_pair_candles(pair: str, lookback_days: int, limit: int = 1000) -> Tup
     return df, latest_closed_open
 
 
-def _fetch_futures_candles(pair: str, lookback_days: int) -> Tuple[pd.DataFrame, pd.Timestamp]:
+def _fetch_futures_candles(pair: str, lookback_days: int, timeframe: str = TIMEFRAME) -> Tuple[pd.DataFrame, pd.Timestamp]:
     url = f"{PUBLIC_BASE}/market_data/candlesticks"
     now_utc = pd.Timestamp.now(tz="UTC")
     now_sec = int(now_utc.timestamp())
     start_sec = int((now_utc - pd.Timedelta(days=max(1, lookback_days))).timestamp())
+    tf, bar_freq, bar_minutes = _normalize_timeframe(timeframe)
     params = {
         "pair": pair,
         "from": start_sec,
         "to": now_sec,
-        "resolution": _futures_resolution(TIMEFRAME),
+        "resolution": _futures_resolution(tf),
         "pcode": "f",
     }
     res = requests.get(url, params=params, timeout=20)
@@ -423,7 +447,7 @@ def _fetch_futures_candles(pair: str, lookback_days: int) -> Tuple[pd.DataFrame,
     raw = res.json()
 
     now_ist = pd.Timestamp.now(tz=IST)
-    latest_closed_open = now_ist.floor(BAR_FREQ) - pd.Timedelta(minutes=BAR_MINUTES)
+    latest_closed_open = now_ist.floor(bar_freq) - pd.Timedelta(minutes=bar_minutes)
     if isinstance(raw, dict):
         candles = raw.get("data", [])
     elif isinstance(raw, list):
@@ -516,13 +540,13 @@ def _fetch_futures_trades(pair: str, limit: int = 500) -> pd.DataFrame:
     return df[["time", "price", "qty"]]
 
 
-def _build_candles_from_trades(trades: pd.DataFrame) -> pd.DataFrame:
+def _build_candles_from_trades(trades: pd.DataFrame, bar_freq: str = BAR_FREQ) -> pd.DataFrame:
     if trades.empty:
         return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
 
     candles = (
         trades.set_index("time")
-        .resample(BAR_FREQ, label="left", closed="left")
+        .resample(bar_freq, label="left", closed="left")
         .agg(
             Open=("price", "first"),
             High=("price", "max"),
@@ -583,17 +607,19 @@ def fetch_futures_ticker(pair: str) -> dict | None:
     return out
 
 
-def cache_path_for_pair(pair: str, execution_mode: str) -> str:
+def cache_path_for_pair(pair: str, execution_mode: str, timeframe: str | None = None) -> str:
     here = os.path.dirname(os.path.abspath(__file__))
     cache_dir = os.path.join(here, ".cache")
     os.makedirs(cache_dir, exist_ok=True)
     safe_pair = pair.replace("-", "_")
     safe_mode = execution_mode.replace("-", "_")
-    return os.path.join(cache_dir, f"live_confluence_{safe_mode}_{safe_pair}.csv")
+    tf, _, _ = _normalize_timeframe(timeframe)
+    safe_tf = tf.replace("-", "_")
+    return os.path.join(cache_dir, f"live_confluence_{safe_mode}_{safe_pair}_{safe_tf}.csv")
 
 
-def load_cached_bars(pair: str, execution_mode: str) -> pd.DataFrame:
-    path = cache_path_for_pair(pair, execution_mode)
+def load_cached_bars(pair: str, execution_mode: str, timeframe: str | None = None) -> pd.DataFrame:
+    path = cache_path_for_pair(pair, execution_mode, timeframe=timeframe)
     if not os.path.exists(path):
         return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
     try:
@@ -607,10 +633,10 @@ def load_cached_bars(pair: str, execution_mode: str) -> pd.DataFrame:
         return pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
 
 
-def save_cached_bars(pair: str, execution_mode: str, df: pd.DataFrame) -> None:
+def save_cached_bars(pair: str, execution_mode: str, df: pd.DataFrame, timeframe: str | None = None) -> None:
     if df.empty:
         return
-    path = cache_path_for_pair(pair, execution_mode)
+    path = cache_path_for_pair(pair, execution_mode, timeframe=timeframe)
     out = df.reset_index().rename(columns={"index": "time"})
     out["time"] = out["time"].dt.tz_convert("UTC")
     out.to_csv(path, index=False)
@@ -638,22 +664,24 @@ def fetch_closed_bars(
     lookback_days: int,
     limit: int = 1000,
     execution_mode: str = "spot",
+    timeframe: str | None = None,
 ) -> Tuple[pd.DataFrame, pd.Timestamp, str | None, str | None]:
-    latest_closed_open = pd.Timestamp.now(tz=IST).floor(BAR_FREQ) - pd.Timedelta(minutes=BAR_MINUTES)
+    tf, bar_freq, bar_minutes = _normalize_timeframe(timeframe)
+    latest_closed_open = pd.Timestamp.now(tz=IST).floor(bar_freq) - pd.Timedelta(minutes=bar_minutes)
     best_pair = None
     best_df = pd.DataFrame(columns=["Open", "High", "Low", "Close", "Volume"])
     best_source = None
     best_last_ts = None
 
     if execution_mode == "futures":
-        df, latest_closed_open = _fetch_futures_candles(pair, lookback_days=lookback_days)
+        df, latest_closed_open = _fetch_futures_candles(pair, lookback_days=lookback_days, timeframe=tf)
         if not df.empty:
             best_df = df
             best_pair = pair
             best_source = "futures_candles"
             best_last_ts = df.index.max()
         trades = _fetch_futures_trades(pair, limit=500)
-        trade_candles = _build_candles_from_trades(trades)
+        trade_candles = _build_candles_from_trades(trades, bar_freq=bar_freq)
         trade_candles = trade_candles[trade_candles.index <= latest_closed_open]
         if not trade_candles.empty:
             last_ts = trade_candles.index.max()
@@ -666,7 +694,7 @@ def fetch_closed_bars(
 
     for candidate in candidate_candle_pairs(pair, market):
         # First try native candles.
-        df, latest_closed_open = _fetch_pair_candles(candidate, lookback_days=lookback_days, limit=limit)
+        df, latest_closed_open = _fetch_pair_candles(candidate, lookback_days=lookback_days, limit=limit, timeframe=tf)
         if not df.empty:
             last_ts = df.index.max()
             if best_last_ts is None or last_ts > best_last_ts:
@@ -677,7 +705,7 @@ def fetch_closed_bars(
 
         # Then try building candles from trades, which are fresher for some markets.
         trades = _fetch_pair_trades(candidate, limit=500)
-        trade_candles = _build_candles_from_trades(trades)
+        trade_candles = _build_candles_from_trades(trades, bar_freq=bar_freq)
         trade_candles = trade_candles[trade_candles.index <= latest_closed_open]
         if not trade_candles.empty:
             last_ts = trade_candles.index.max()
@@ -833,7 +861,61 @@ def _desired_qty(entry_px: float, stop_px: float, risk_dollars: float) -> float:
 
 def _effective_leverage(cfg: RuntimeConfig) -> float:
     max_leverage = max(_env_float("MAX_LEVERAGE", cfg.leverage), 1.0)
-    return max(min(cfg.leverage, max_leverage), 1.0)
+    min_leverage = max(_env_float("MIN_LEVERAGE", 1.0), 1.0)
+    return max(min(cfg.leverage, max_leverage), min_leverage)
+
+
+def _leverage_limits(cfg: RuntimeConfig) -> tuple[float, float]:
+    min_leverage = max(_env_float("MIN_LEVERAGE", 1.0), 1.0)
+    max_leverage = max(_env_float("MAX_LEVERAGE", cfg.leverage), 1.0)
+    return min_leverage, max_leverage
+
+
+def _dynamic_leverage_for_plan(
+    desired_qty: float,
+    entry_px: float,
+    cfg: RuntimeConfig,
+    instrument: dict | None,
+    available_quote: float | None,
+    rr: float,
+    structure_rr: float | None,
+) -> tuple[float, str | None]:
+    min_lev, max_lev = _leverage_limits(cfg)
+    base_lev = _effective_leverage(cfg)
+    max_from_cfg = max_lev
+    if instrument:
+        inst_max = max(
+            float(instrument.get("max_leverage_long") or 0.0),
+            float(instrument.get("max_leverage_short") or 0.0),
+        )
+        if inst_max > 0:
+            max_from_cfg = min(max_from_cfg, inst_max)
+
+    notional = max(desired_qty * entry_px, 0.0)
+    note_parts: list[str] = []
+
+    if structure_rr is not None and rr > 0:
+        min_structure_rr = max(_env_float("MIN_STRUCTURE_RR", rr), 0.1)
+        if structure_rr < min_structure_rr:
+            rr_scale = max(structure_rr / min_structure_rr, 0.1)
+            note_parts.append(f"rr_scale={rr_scale:.2f}")
+            max_from_cfg = max(min_lev, max_from_cfg * rr_scale)
+
+    if available_quote is None or available_quote <= 0:
+        note_parts.append("balance unavailable")
+        leverage = max(min(base_lev, max_from_cfg), min_lev)
+        note = ", ".join(note_parts) if note_parts else None
+        return leverage, note
+
+    max_margin_pct = max(_env_float("MAX_MARGIN_PCT", 1.0), 0.05)
+    max_margin_pct = min(max_margin_pct, 1.0)
+    allowed_margin = max(available_quote * max_margin_pct, 1e-9)
+    required = max(min_lev, notional / allowed_margin)
+    note_parts.append(f"margin<= {max_margin_pct:.0%}")
+
+    leverage = max(min(required, max_from_cfg), min_lev)
+    note = ", ".join(note_parts) if note_parts else None
+    return leverage, note
 
 
 def _target_from_stop(side: int, entry_px: float, stop_px: float, rr: float) -> float:
@@ -984,7 +1066,6 @@ def _build_trade_plan(
         atr = max(entry * 0.002, 1e-6)
 
     rr = max(_env_float("RISK_REWARD_RATIO", 2.0), 1.0)
-    min_structure_rr = max(_env_float("MIN_STRUCTURE_RR", 1.5), 0.1)
     lookback = max(_env_int("SUPPORT_RESISTANCE_LOOKBACK", 72), 10)
     stop_buffer_atr = max(_env_float("STOP_BUFFER_ATR", 0.25), 0.0)
     min_stop_pct = max(_env_float("MIN_STOP_PCT", 0.001), 0.0001)
@@ -994,7 +1075,7 @@ def _build_trade_plan(
     risk_amount, risk_msg = _resolve_risk_amount(cfg)
     if risk_amount <= 0:
         return TradePlan(side, entry, entry, entry, 0.0, risk_amount, 0.0, 0.0, _effective_leverage(cfg), 0.0,
-                         support, resistance, rr, None, "none", risk_msg or "Risk amount is <= 0")
+                         None, support, resistance, rr, None, "none", risk_msg or "Risk amount is <= 0")
 
     stop_source = "mirrored"
     if side == 1:
@@ -1031,6 +1112,7 @@ def _build_trade_plan(
         structure_rr = ((entry - support) / risk_per_unit) if support is not None else None
 
     blocked = None
+    min_structure_rr = max(_env_float("MIN_STRUCTURE_RR", rr), 0.1)
     if structure_rr is not None and structure_rr < min_structure_rr:
         blocked = (
             f"nearest {'resistance' if side == 1 else 'support'} offers only {structure_rr:.2f}R; "
@@ -1040,6 +1122,23 @@ def _build_trade_plan(
     qty = risk_amount / risk_per_unit if risk_per_unit > 0 else 0.0
     notional = qty * entry
     leverage = _effective_leverage(cfg)
+    leverage_note = None
+    if cfg.execution_mode in {"margin", "futures"}:
+        instrument = None
+        available_quote = None
+        if cfg.execution_mode == "futures":
+            try:
+                instrument = fetch_futures_instrument_details(cfg.pair, cfg.futures_margin_currency)
+            except Exception:
+                instrument = None
+        if cfg.place_orders:
+            try:
+                available_quote, _ = fetch_available_quote_balance(cfg)
+            except Exception:
+                available_quote = None
+        leverage, leverage_note = _dynamic_leverage_for_plan(
+            qty, entry, cfg, instrument, available_quote, rr, structure_rr
+        )
     margin_required = notional / leverage if leverage > 0 else notional
     return TradePlan(
         side=side,
@@ -1052,6 +1151,7 @@ def _build_trade_plan(
         notional=notional,
         leverage=leverage,
         margin_required=margin_required,
+        leverage_note=leverage_note,
         support=support,
         resistance=resistance,
         rr=rr,
@@ -1071,6 +1171,7 @@ def _plan_summary(plan: TradePlan) -> str:
         f"Notional=${plan.notional:,.2f} Margin~${plan.margin_required:,.2f} Lev={plan.leverage:.2f}x "
         f"Risk=${plan.risk_amount:,.2f} Support={support} Resistance={resistance} "
         f"StructureRR={structure_rr} StopSource={plan.stop_source}"
+        + (f" LevNote={plan.leverage_note}" if plan.leverage_note else "")
     )
 
 
@@ -1239,7 +1340,13 @@ def fetch_available_quote_balance(cfg: RuntimeConfig) -> Tuple[float | None, str
     return 0.0, quote
 
 
-def _cap_entry_qty(side: int, desired_qty: float, price: float, cfg: RuntimeConfig) -> Tuple[float, str | None]:
+def _cap_entry_qty(
+    side: int,
+    desired_qty: float,
+    price: float,
+    cfg: RuntimeConfig,
+    leverage_override: float | None = None,
+) -> Tuple[float, str | None]:
     if not cfg.place_orders:
         return desired_qty, None
 
@@ -1251,10 +1358,18 @@ def _cap_entry_qty(side: int, desired_qty: float, price: float, cfg: RuntimeConf
         return 0.0, "Could not determine available quote balance for live sizing."
 
     if cfg.execution_mode == "margin":
-        max_notional = available_quote * _effective_leverage(cfg)
+        leverage = leverage_override if leverage_override is not None else _effective_leverage(cfg)
+        max_margin_pct = max(_env_float("MAX_MARGIN_PCT", 1.0), 0.05)
+        max_margin_pct = min(max_margin_pct, 1.0)
+        effective_available = available_quote * max_margin_pct
+        max_notional = effective_available * leverage
     elif cfg.execution_mode == "futures":
         instrument = fetch_futures_instrument_details(cfg.pair, cfg.futures_margin_currency)
-        max_notional = available_quote * _effective_leverage(cfg)
+        leverage = leverage_override if leverage_override is not None else _effective_leverage(cfg)
+        max_margin_pct = max(_env_float("MAX_MARGIN_PCT", 1.0), 0.05)
+        max_margin_pct = min(max_margin_pct, 1.0)
+        effective_available = available_quote * max_margin_pct
+        max_notional = effective_available * leverage
         max_qty = max_notional / price if price > 0 else 0.0
         max_qty = min(max_qty, float(instrument.get("max_market_order_quantity") or max_qty))
         qty_increment = float(instrument.get("quantity_increment") or 0.0)
@@ -1280,7 +1395,7 @@ def _cap_entry_qty(side: int, desired_qty: float, price: float, cfg: RuntimeConf
             return (
                 capped_qty,
                 f"Qty capped by available {quote} futures wallet balance: desired={desired_qty:,.8f}, "
-                f"capped={capped_qty:,.8f}, available={available_quote:,.4f} {quote}, leverage={_effective_leverage(cfg):.2f}x.",
+                f"capped={capped_qty:,.8f}, available={available_quote:,.4f} {quote}, leverage={leverage:.2f}x.",
             )
         return capped_qty, None
     else:
@@ -1337,13 +1452,14 @@ def _build_margin_order(
     stop_px: float,
     target_px: float,
     cfg: RuntimeConfig,
+    leverage: float | None = None,
 ) -> dict:
     return {
         "side": side,
         "order_type": "market_order",
         "market": market,
         "quantity": qty,
-        "leverage": cfg.leverage,
+        "leverage": leverage if leverage is not None else cfg.leverage,
         "target_price": target_px,
         "sl_price": stop_px,
         "ecode": cfg.margin_ecode,
@@ -1367,6 +1483,7 @@ def _place_margin_order(
     stop_px: float,
     target_px: float,
     cfg: RuntimeConfig,
+    leverage: float | None = None,
 ) -> Tuple[bool, str, str | None]:
     if qty <= 0:
         return False, "invalid qty <= 0", None
@@ -1377,7 +1494,15 @@ def _place_margin_order(
         return True, f"PAPER margin order side={side} qty={qty}", None
 
     try:
-        body = _build_margin_order(side=side, market=cfg.market, qty=qty, stop_px=stop_px, target_px=target_px, cfg=cfg)
+        body = _build_margin_order(
+            side=side,
+            market=cfg.market,
+            qty=qty,
+            stop_px=stop_px,
+            target_px=target_px,
+            cfg=cfg,
+            leverage=leverage,
+        )
         data = _private_post("/exchange/v1/margin/create", body, cfg)
         order = _extract_margin_order(data)
         order_id = str(order.get("id")) if order and order.get("id") else None
@@ -1429,6 +1554,7 @@ def _build_futures_order(
     side: str,
     qty: float,
     cfg: RuntimeConfig,
+    leverage: float | None = None,
 ) -> dict:
     order = {
         "side": side,
@@ -1437,7 +1563,7 @@ def _build_futures_order(
         "price": None,
         "stop_price": None,
         "total_quantity": qty,
-        "leverage": cfg.leverage,
+        "leverage": leverage if leverage is not None else cfg.leverage,
         "notification": "no_notification",
         "hidden": False,
         "post_only": False,
@@ -1451,6 +1577,7 @@ def _place_futures_order(
     side: str,
     qty: float,
     cfg: RuntimeConfig,
+    leverage: float | None = None,
 ) -> Tuple[bool, str, str | None]:
     if qty <= 0:
         return False, "invalid qty <= 0", None
@@ -1460,7 +1587,7 @@ def _place_futures_order(
     if not cfg.place_orders:
         return True, f"PAPER futures order side={side} qty={qty}", None
     try:
-        body = _build_futures_order(side=side, qty=qty, cfg=cfg)
+        body = _build_futures_order(side=side, qty=qty, cfg=cfg, leverage=leverage)
         data = _private_post("/exchange/v1/derivatives/futures/orders/create", body, cfg)
         order = _extract_futures_order(data)
         order_id = str(order.get("id")) if order and order.get("id") else None
@@ -1744,7 +1871,7 @@ def process_closed_bar_futures(
             )
             return events
 
-        entry_qty, cap_msg = _cap_entry_qty(signal_side, plan.qty, close, cfg)
+        entry_qty, cap_msg = _cap_entry_qty(signal_side, plan.qty, close, cfg, plan.leverage)
         if entry_qty <= 0:
             events.append(
                 f"[{_fmt_ts(ts)}] {_fmt_side(signal_side)} ENTRY BLOCKED | {cap_msg or 'qty <= 0'}"
@@ -1779,7 +1906,7 @@ def process_closed_bar_futures(
             target_override=plan.target_px,
         )
         order_side = "buy" if signal_side == 1 else "sell"
-        ok, broker_msg, broker_order_id = _place_futures_order(order_side, preview.qty, cfg)
+        ok, broker_msg, broker_order_id = _place_futures_order(order_side, preview.qty, cfg, plan.leverage)
         if not ok:
             events.append(f"[{_fmt_ts(ts)}] {_fmt_side(signal_side)} ENTRY BLOCKED | {broker_msg}")
             return events
@@ -1943,15 +2070,48 @@ def process_closed_bar(
                 init_risk_per_unit=state.init_risk_per_unit,
                 realized_pnl=state.realized_pnl,
             )
-            desired_qty = _desired_qty(close, st_line, cfg.risk_dollars)
-            entry_qty, cap_msg = _cap_entry_qty(1, desired_qty, close, cfg)
+            if cfg.execution_mode == "margin":
+                plan = _build_trade_plan(1, ts, row, history, cfg)
+                events.append(f"[{_fmt_ts(ts)}] {_plan_summary(plan)}")
+                if plan.blocked_reason:
+                    events.append(
+                        f"[{_fmt_ts(ts)}] LONG ENTRY BLOCKED | {plan.blocked_reason}"
+                    )
+                    return events
+                entry_qty, cap_msg = _cap_entry_qty(1, plan.qty, close, cfg, plan.leverage)
+                risk_amount = plan.risk_amount
+                stop_override = plan.stop_px
+                target_override = plan.target_px
+                leverage_override = plan.leverage
+            else:
+                desired_qty = _desired_qty(close, st_line, cfg.risk_dollars)
+                entry_qty, cap_msg = _cap_entry_qty(1, desired_qty, close, cfg)
+                risk_amount = cfg.risk_dollars
+                stop_override = None
+                target_override = None
+                leverage_override = None
             if entry_qty <= 0:
                 events.append(f"[{_fmt_ts(ts)}] LONG ENTRY BLOCKED | {cap_msg or 'qty <= 0'}")
                 return events
-            enter_msg = _enter_trade(preview, 1, ts, close, st_line, cfg.risk_dollars, qty_override=entry_qty)
+            enter_msg = _enter_trade(
+                preview,
+                1,
+                ts,
+                close,
+                st_line,
+                risk_amount,
+                qty_override=entry_qty,
+                stop_override=stop_override,
+                target_override=target_override,
+            )
             if cfg.execution_mode == "margin":
                 ok, broker_msg, broker_order_id = _place_margin_order(
-                    "buy", preview.qty, preview.stop_px, preview.target_px, cfg
+                    "buy",
+                    preview.qty,
+                    preview.stop_px,
+                    preview.target_px,
+                    cfg,
+                    leverage_override,
                 )
             else:
                 ok, broker_msg = _place_market_order("buy", preview.qty, cfg)
@@ -1982,15 +2142,48 @@ def process_closed_bar(
                 init_risk_per_unit=state.init_risk_per_unit,
                 realized_pnl=state.realized_pnl,
             )
-            desired_qty = _desired_qty(close, st_line, cfg.risk_dollars)
-            entry_qty, cap_msg = _cap_entry_qty(-1, desired_qty, close, cfg)
+            if cfg.execution_mode == "margin":
+                plan = _build_trade_plan(-1, ts, row, history, cfg)
+                events.append(f"[{_fmt_ts(ts)}] {_plan_summary(plan)}")
+                if plan.blocked_reason:
+                    events.append(
+                        f"[{_fmt_ts(ts)}] SHORT ENTRY BLOCKED | {plan.blocked_reason}"
+                    )
+                    return events
+                entry_qty, cap_msg = _cap_entry_qty(-1, plan.qty, close, cfg, plan.leverage)
+                risk_amount = plan.risk_amount
+                stop_override = plan.stop_px
+                target_override = plan.target_px
+                leverage_override = plan.leverage
+            else:
+                desired_qty = _desired_qty(close, st_line, cfg.risk_dollars)
+                entry_qty, cap_msg = _cap_entry_qty(-1, desired_qty, close, cfg)
+                risk_amount = cfg.risk_dollars
+                stop_override = None
+                target_override = None
+                leverage_override = None
             if entry_qty <= 0:
                 events.append(f"[{_fmt_ts(ts)}] SHORT ENTRY BLOCKED | {cap_msg or 'qty <= 0'}")
                 return events
-            enter_msg = _enter_trade(preview, -1, ts, close, st_line, cfg.risk_dollars, qty_override=entry_qty)
+            enter_msg = _enter_trade(
+                preview,
+                -1,
+                ts,
+                close,
+                st_line,
+                risk_amount,
+                qty_override=entry_qty,
+                stop_override=stop_override,
+                target_override=target_override,
+            )
             if cfg.execution_mode == "margin":
                 ok, broker_msg, broker_order_id = _place_margin_order(
-                    "sell", preview.qty, preview.stop_px, preview.target_px, cfg
+                    "sell",
+                    preview.qty,
+                    preview.stop_px,
+                    preview.target_px,
+                    cfg,
+                    leverage_override,
                 )
             else:
                 ok, broker_msg = _place_market_order("sell", preview.qty, cfg)
@@ -2201,7 +2394,7 @@ def run_monitor(cfg: RuntimeConfig) -> None:
 
     print("=" * 96)
     print(
-        f"Live Confluence Monitor | Pair={cfg.pair} | Market={cfg.market} | TF={TIMEFRAME} | "
+        f"Live Confluence Monitor | Pair={cfg.pair} | Market={cfg.market} | TF={cfg.timeframe} | "
         f"Mode={cfg.execution_mode.upper()} | "
         f"Risk=${cfg.risk_dollars:.2f} | PlaceOrders={cfg.place_orders}"
     )
@@ -2214,11 +2407,15 @@ def run_monitor(cfg: RuntimeConfig) -> None:
     if not cfg.allow_shorts and cfg.execution_mode == "spot":
         print("Spot-only mode: short entries are ignored.")
     if cfg.execution_mode == "margin":
-        print(f"Margin execution enabled. Leverage={cfg.leverage:.2f} Ecode={cfg.margin_ecode}")
+        print(
+            f"Margin execution enabled. BaseLeverage={cfg.leverage:.2f} "
+            f"MaxLeverage={_env_float('MAX_LEVERAGE', cfg.leverage):.2f} Ecode={cfg.margin_ecode}"
+        )
     if cfg.execution_mode == "futures":
         print(
             f"Futures execution enabled. MarginCurrency={cfg.futures_margin_currency} "
-            f"MarginType={cfg.position_margin_type} Leverage={cfg.leverage:.2f}"
+            f"MarginType={cfg.position_margin_type} BaseLeverage={cfg.leverage:.2f} "
+            f"MaxLeverage={_env_float('MAX_LEVERAGE', cfg.leverage):.2f}"
         )
 
     while True:
@@ -2228,16 +2425,17 @@ def run_monitor(cfg: RuntimeConfig) -> None:
                 cfg.market,
                 lookback_days=cfg.lookback_days,
                 execution_mode=cfg.execution_mode,
+                timeframe=cfg.timeframe,
             )
             if used_pair and (used_pair != cfg.candle_pair or used_source != cfg.data_source):
                 print(f"Data feed selected: pair={used_pair} source={used_source}")
                 cfg.candle_pair = used_pair
                 cfg.data_source = used_source
             if used_pair:
-                cached_bars = load_cached_bars(used_pair, cfg.execution_mode)
+                cached_bars = load_cached_bars(used_pair, cfg.execution_mode, timeframe=cfg.timeframe)
                 bars = merge_bars(cached_bars, bars)
                 bars = bars[bars.index <= latest_closed]
-                save_cached_bars(used_pair, cfg.execution_mode, bars)
+                save_cached_bars(used_pair, cfg.execution_mode, bars, timeframe=cfg.timeframe)
             if cfg.place_orders and cfg.execution_mode != "futures" and used_pair and _pair_suffix(used_pair) != derive_suffix_from_market(cfg.market):
                 raise ValueError(
                     f"Execution safety check failed: freshest data pair {used_pair} does not match live market {cfg.market}. "
@@ -2257,7 +2455,8 @@ def run_monitor(cfg: RuntimeConfig) -> None:
             print_price_status(bars.index.max(), bars, used_pair, used_source, ticker)
 
             last_bar_ts = bars.index.max()
-            if latest_closed - last_bar_ts > pd.Timedelta(minutes=BAR_MINUTES * 6):
+            _, _, bar_minutes = _normalize_timeframe(cfg.timeframe)
+            if latest_closed - last_bar_ts > pd.Timedelta(minutes=bar_minutes * 6):
                 print(
                     f"Stale data guard: latest bar={_fmt_ts(last_bar_ts)} IST, "
                     f"expected around {_fmt_ts(latest_closed)} IST. "
@@ -2333,7 +2532,7 @@ def run_monitor(cfg: RuntimeConfig) -> None:
 
 def parse_args() -> RuntimeConfig:
     parser = argparse.ArgumentParser(
-        description="CoinDCX live 5m confluence monitor with fixed-dollar risk sizing"
+        description="CoinDCX live confluence monitor with fixed-dollar risk sizing"
     )
     parser.add_argument("--pair", type=str, default="B-ETH_USDT", help="CoinDCX pair for candles, e.g. B-ETH_USDT")
     parser.add_argument(
@@ -2380,6 +2579,12 @@ def parse_args() -> RuntimeConfig:
     )
     parser.add_argument("--qty-precision", type=int, default=6, help="Decimal precision for order quantity")
     parser.add_argument("--lookback-days", type=int, default=7, help="Candle lookback window (days)")
+    parser.add_argument(
+        "--timeframe",
+        type=str,
+        default=TIMEFRAME,
+        help="Candle timeframe (5m, 15m, 1h, 4h)",
+    )
     parser.add_argument("--api-key", type=str, default=None, help="API key (or use COINDCX_API_KEY env var)")
     parser.add_argument("--api-secret", type=str, default=None, help="API secret (or use COINDCX_API_SECRET env var)")
     args = parser.parse_args()
@@ -2401,6 +2606,7 @@ def parse_args() -> RuntimeConfig:
     if args.risk_reward is not None:
         os.environ["RISK_REWARD_RATIO"] = str(max(float(args.risk_reward), 1.0))
 
+    timeframe, _, _ = _normalize_timeframe(args.timeframe)
     cfg = RuntimeConfig(
         pair=args.pair,
         market=market,
@@ -2415,6 +2621,7 @@ def parse_args() -> RuntimeConfig:
         position_margin_type=str(args.position_margin_type).lower(),
         qty_precision=int(args.qty_precision),
         lookback_days=int(args.lookback_days),
+        timeframe=timeframe,
         api_key=api_key,
         api_secret=api_secret,
     )

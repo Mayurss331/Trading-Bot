@@ -1,427 +1,571 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>CoinDCX Bot Dashboard</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="/styles.css" />
-    <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
-  </head>
-  <body>
 
-    <!-- Header -->
-    <header class="topbar">
-      <div class="topbar-brand">
-        <button id="menuButton" type="button" class="icon-button menu-button" aria-label="Open menu" aria-controls="sideDrawer" aria-expanded="false">
-          <span></span>
-          <span></span>
-          <span></span>
-        </button>
-        <h1>CoinDCX Bot</h1>
-        <div class="ws-status" id="wsStatus" title="WebSocket connection">
-          <span class="ws-dot" id="wsDot"></span>
-          <span id="wsLabel">Connecting</span>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CoinDCX Bot Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+  <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+
+<body>
+
+  <!-- VS Code-style Activity Bar -->
+  <nav class="activity-bar" aria-label="Activity bar">
+    <button class="activity-icon" id="actDashboard" title="Dashboard" aria-pressed="true">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    </button>
+    <button class="activity-icon" id="actVolScanner" title="Volatility Scanner">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    </button>
+    <button class="activity-icon" id="actExpertPicks" title="Expert Picks">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+    </button>
+  </nav>
+
+  <!-- Volatility Scanner Side Panel -->
+  <aside class="vol-sidebar" id="volSidebar" aria-label="Volatility scanner" hidden>
+    <div class="vol-sidebar-head">
+      <div>
+        <h2>Volatility Scanner</h2>
+        <p>Futures coins ≤ $10 · ATR% ranked <span id="volScanMeta"></span></p>
+      </div>
+      <div class="vol-head-actions">
+        <button id="volScanButton" type="button" class="btn-primary">Scan</button>
+        <button id="volSidebarClose" type="button" class="btn-ghost">✕</button>
+      </div>
+    </div>
+    <div class="vol-sidebar-body">
+      <table class="data-table vol-table">
+        <thead>
+          <tr>
+            <th>#</th><th>Coin</th><th>Price</th>
+            <th>ATR%</th><th>Range%</th><th>StdDev%</th>
+            <th>Vol</th><th>Chg%</th>
+          </tr>
+        </thead>
+        <tbody id="volScanBody">
+          <tr><td colspan="8" class="empty-row">Click Scan to find high-volatility coins.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </aside>
+
+  <!-- Expert Picks Side Panel -->
+  <aside class="expert-sidebar" id="expertSidebar" aria-label="Expert Picks" hidden>
+    <div class="expert-sidebar-head">
+      <div>
+        <h2>Expert Picks</h2>
+        <p>Smart signals for your portfolio</p>
+      </div>
+      <div class="expert-head-actions">
+        <button id="expertRefreshBtn" type="button" class="btn-primary">Refresh</button>
+        <button id="expertSidebarClose" type="button" class="btn-ghost">✕</button>
+      </div>
+    </div>
+    <div class="expert-sidebar-body">
+      <!-- Sentiment Card -->
+      <div class="expert-card">
+        <div class="expert-card-label">Market Sentiment</div>
+        <div class="sentiment-display" id="sentimentDisplay">
+          <span class="sentiment-value" id="sentimentValue">—</span>
+          <span class="sentiment-class" id="sentimentClass">Loading...</span>
+        </div>
+        <small class="sentiment-time" id="sentimentTime"></small>
+      </div>
+
+      <!-- Active Positions Recommendations -->
+      <div class="expert-card">
+        <div class="expert-card-label">Your Positions</div>
+        <div id="expertPositionsBody">
+          <table class="data-table expert-table">
+            <thead>
+              <tr><th>Coin</th><th>Pos</th><th>Signal</th><th>Action</th></tr>
+            </thead>
+            <tbody id="expertPosBody">
+              <tr><td colspan="4" class="empty-row">Loading positions...</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
 
-      <div class="topbar-controls">
-        <label class="ctrl-label">
-          <span>Pair</span>
-          <input id="pairInput" value="B-ETH_USDT" autocomplete="off" />
-        </label>
-        <label class="ctrl-label">
-          <span>Market</span>
-          <input id="marketInput" value="ETHUSDT" autocomplete="off" />
-        </label>
-        <label class="ctrl-label">
-          <span>Risk $</span>
-          <input id="riskInput" type="number" min="0.01" step="1" value="10" />
-        </label>
-        <label class="ctrl-label pair2-field">
-          <span>Pair 2</span>
-          <input id="pair2Input" placeholder="e.g. B-BTC_USDT" autocomplete="off" />
-        </label>
-        <label class="ctrl-label pair2-field">
-          <span>Market 2</span>
-          <input id="market2Input" placeholder="e.g. BTCUSDT" autocomplete="off" />
-        </label>
-      </div>
-    </header>
-
-    <!-- Controls bar -->
-    <nav class="controls-bar" aria-label="Strategy controls">
-      <label class="ctrl-label">
-        <span>Strategy</span>
-        <select id="strategyInput">
-          <option value="arbitrage">Arbitrage Scanner</option>
-          <option value="confluence" selected>Confluence</option>
-          <option value="funding_basis">Funding / Basis</option>
-          <option value="mean_reversion">Mean Reversion</option>
-          <option value="mixed_consensus">Mixed Consensus</option>
-          <option value="pairs_stat_arb">Pairs Scanner</option>
-          <option value="trend_following">Trend Following</option>
-          <option value="volatility_squeeze">Volatility Squeeze</option>
-        </select>
-      </label>
-      <label class="ctrl-label">
-        <span>Mode</span>
-        <select id="modeInput">
-          <option value="spot">Spot</option>
-          <option value="margin">Margin</option>
-          <option value="futures" selected>Futures</option>
-        </select>
-      </label>
-      <label class="ctrl-label">
-        <span>Timeframe</span>
-        <select id="timeframeInput">
-          <option value="5m" selected>5m</option>
-          <option value="15m">15m</option>
-          <option value="1h">1h</option>
-          <option value="4h">4h</option>
-        </select>
-      </label>
-      <label class="execution-toggle" title="Remember whether this dashboard is set to paper mode or real-order intent.">
-        <span class="ctrl-label-text">Execution</span>
-        <span class="switch-row">
-          <input id="realOrdersToggle" type="checkbox" />
-          <span class="switch-track" aria-hidden="true"></span>
-          <strong id="executionModeLabel">Paper only</strong>
-        </span>
-      </label>
-      <label class="ctrl-label">
-        <span>Lookback (days)</span>
-        <input id="lookbackInput" type="number" min="1" max="30" value="3" />
-      </label>
-      <button id="refreshButton" type="button" class="btn-primary">Refresh</button>
-      
-      <!-- Tracked coins menu -->
-      <div class="tracked-coins-menu" id="trackedCoinsMenu" style="display: none;">
-        <span class="menu-label">Tracking:</span>
-        <div class="coins-menu-items" id="coinsMenuItems"></div>
+      <!-- Top Signals -->
+      <div class="expert-card">
+        <div class="expert-card-label">Top Signals</div>
+        <div id="expertSignalsBody">
+          <table class="data-table expert-table">
+            <thead>
+              <tr><th>#</th><th>Coin</th><th>Signal</th><th>Conf%</th></tr>
+            </thead>
+            <tbody id="expertSignalsTable">
+              <tr><td colspan="4" class="empty-row">Loading signals...</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <span class="feed-text" id="feedText">Feed: —</span>
-    </nav>
+      <!-- Attribution -->
+      <div class="expert-attribution">
+        <small>Powered by <a href="https://mycryptosignal.com" target="_blank">MyCryptoSignal</a></small>
+      </div>
+    </div>
+  </aside>
 
-    <!-- Account overview -->
-    <section class="account-overview" aria-label="Wallet balance and position summary">
-      <article class="account-card account-card-main">
-        <div class="account-card-head">
-          <span class="metric-label">Wallet Balance</span>
-          <button id="refreshAccountButton" type="button" class="btn-ghost">Refresh</button>
-        </div>
-        <strong class="account-value" id="walletBalance">—</strong>
-        <small class="metric-sub" id="walletStatus">Add API keys in .env</small>
-      </article>
-      <article class="account-card">
-        <span class="metric-label">Active Positions</span>
-        <strong class="account-value" id="positionsCount">—</strong>
-        <small class="metric-sub" id="positionsMeta">—</small>
-      </article>
-      <article class="account-card">
-        <span class="metric-label">Unrealized PnL</span>
-        <strong class="account-value" id="accountPnl">—</strong>
-        <small class="metric-sub" id="accountModeText">Futures account</small>
-      </article>
-      <article class="account-card risk-card">
-        <span class="metric-label">Risk / Sizing</span>
-        <strong class="account-value" id="currentRiskText">—</strong>
-        <div class="risk-buttons" id="riskButtons"></div>
-        <div class="custom-risk-row">
-          <input id="customRiskInput" type="number" min="0.0001" step="0.01" placeholder="Custom $" />
-          <button id="applyCustomRiskButton" type="button" class="btn-ghost">Apply</button>
-        </div>
-      </article>
-    </section>
+  <!-- Page content wrapper -->
+  <div class="page-content" id="pageContent">
 
-    <!-- Metrics strip -->
-    <section class="metrics-row" aria-label="Market summary">
-      <article class="metric-card">
-        <span class="metric-label">Last Price</span>
-        <strong class="metric-value" id="lastPrice">—</strong>
-        <small class="metric-sub" id="changePct">—</small>
-      </article>
-      <article class="metric-card">
-        <span class="metric-label">Signal</span>
-        <strong class="metric-value" id="signalText">—</strong>
-        <small class="metric-sub" id="signalMeta">—</small>
-      </article>
-      <article class="metric-card">
-        <span class="metric-label">Score / RSI</span>
-        <strong class="metric-value" id="scoreText">—</strong>
-        <small class="metric-sub" id="rsiText">—</small>
-      </article>
-      <article class="metric-card">
-        <span class="metric-label">Position</span>
-        <strong class="metric-value" id="positionText">—</strong>
-        <small class="metric-sub" id="positionMeta">—</small>
-      </article>
-    </section>
+  <!-- Header -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <button id="menuButton" type="button" class="icon-button menu-button" aria-label="Open menu"
+        aria-controls="sideDrawer" aria-expanded="false">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <h1>CoinDCX Bot</h1>
+      <div class="ws-status" id="wsStatus" title="WebSocket connection">
+        <span class="ws-dot" id="wsDot"></span>
+        <span id="wsLabel">Connecting</span>
+      </div>
+    </div>
 
-    <!-- Main workspace -->
-    <main class="workspace">
+    <div class="topbar-controls">
+      <label class="ctrl-label">
+        <span>Pair</span>
+        <input id="pairInput" value="B-ETH_USDT" autocomplete="off" />
+      </label>
+      <label class="ctrl-label">
+        <span>Market</span>
+        <input id="marketInput" value="ETHUSDT" autocomplete="off" />
+      </label>
+      <label class="ctrl-label">
+        <span>Risk $</span>
+        <input id="riskInput" type="number" min="0.01" step="1" value="10" />
+      </label>
+      <label class="ctrl-label pair2-field">
+        <span>Pair 2</span>
+        <input id="pair2Input" placeholder="e.g. B-BTC_USDT" autocomplete="off" />
+      </label>
+      <label class="ctrl-label pair2-field">
+        <span>Market 2</span>
+        <input id="market2Input" placeholder="e.g. BTCUSDT" autocomplete="off" />
+      </label>
+    </div>
+  </header>
 
-      <!-- Left column: chart + score/rsi + tracker -->
-      <div class="col-left">
+  <!-- Controls bar -->
+  <nav class="controls-bar" aria-label="Strategy controls">
+    <label class="ctrl-label">
+      <span>Strategy</span>
+      <select id="strategyInput">
+        <option value="arbitrage">Arbitrage Scanner</option>
+        <option value="confluence" selected>Confluence</option>
+        <option value="funding_basis">Funding / Basis</option>
+        <option value="mean_reversion">Mean Reversion</option>
+        <option value="mixed_consensus">Mixed Consensus</option>
+        <option value="pairs_stat_arb">Pairs Scanner</option>
+        <option value="trend_following">Trend Following</option>
+        <option value="volatility_squeeze">Volatility Squeeze</option>
+      </select>
+    </label>
+    <label class="ctrl-label">
+      <span>Mode</span>
+      <select id="modeInput">
+        <option value="spot">Spot</option>
+        <option value="margin">Margin</option>
+        <option value="futures" selected>Futures</option>
+      </select>
+    </label>
+    <label class="ctrl-label">
+      <span>Timeframe</span>
+      <select id="timeframeInput">
+        <option value="5m" selected>5m</option>
+        <option value="15m">15m</option>
+        <option value="1h">1h</option>
+        <option value="4h">4h</option>
+      </select>
+    </label>
+    <label class="execution-toggle" title="Remember whether this dashboard is set to paper mode or real-order intent.">
+      <span class="ctrl-label-text">Execution</span>
+      <span class="switch-row">
+        <input id="realOrdersToggle" type="checkbox" />
+        <span class="switch-track" aria-hidden="true"></span>
+        <strong id="executionModeLabel">Paper only</strong>
+      </span>
+    </label>
+    <label class="ctrl-label">
+      <span>Lookback (days)</span>
+      <input id="lookbackInput" type="number" min="1" max="30" value="3" />
+    </label>
+    <button id="refreshButton" type="button" class="btn-primary">Refresh</button>
 
-        <section class="panel chart-panel" aria-label="Price chart">
-          <div class="panel-head">
-            <div>
-              <h2 id="priceChartTitle">Price + Strategy Line</h2>
-              <p id="priceChartSub">Candlestick with Supertrend overlay</p>
-            </div>
-            <div class="chart-legend">
-              <span class="legend-item long">Long entry ▲</span>
-              <span class="legend-item short">Short entry ▼</span>
-            </div>
-          </div>
-          <div id="priceChart" class="lwc-container"></div>
-        </section>
+    <!-- Tracked coins menu -->
+    <div class="tracked-coins-menu" id="trackedCoinsMenu" style="display: none;">
+      <span class="menu-label">Tracking:</span>
+      <div class="coins-menu-items" id="coinsMenuItems"></div>
+    </div>
 
-        <div class="score-rsi-row">
-          <section class="panel score-panel" aria-label="Strategy score">
-            <div class="panel-head">
-              <h2 id="scoreChartTitle">Score</h2>
-              <p id="scoreChartText">—5 to +5 confluence vote</p>
-            </div>
-            <canvas id="scoreChart" height="140"></canvas>
-          </section>
+    <span class="feed-text" id="feedText">Feed: —</span>
+  </nav>
 
-          <section class="panel rsi-panel" aria-label="RSI">
-            <div class="panel-head">
-              <h2>RSI</h2>
-              <p>Overbought above 70 · Oversold below 30</p>
-            </div>
-            <canvas id="rsiChart" height="140"></canvas>
-          </section>
-        </div>
+  <!-- Account overview -->
+  <section class="account-overview" aria-label="Wallet balance and position summary">
+    <article class="account-card account-card-main">
+      <div class="account-card-head">
+        <span class="metric-label">Wallet Balance</span>
+        <button id="refreshAccountButton" type="button" class="btn-ghost">Refresh</button>
+      </div>
+      <strong class="account-value" id="walletBalance">—</strong>
+      <small class="metric-sub" id="walletStatus">Add API keys in .env</small>
+    </article>
+    <article class="account-card">
+      <span class="metric-label">Active Positions</span>
+      <strong class="account-value" id="positionsCount">—</strong>
+      <small class="metric-sub" id="positionsMeta">—</small>
+    </article>
+    <article class="account-card">
+      <span class="metric-label">Unrealized PnL</span>
+      <strong class="account-value" id="accountPnl">—</strong>
+      <small class="metric-sub" id="accountModeText">Futures account</small>
+    </article>
+    <article class="account-card risk-card">
+      <span class="metric-label">Risk / Sizing</span>
+      <strong class="account-value" id="currentRiskText">—</strong>
+      <div class="risk-buttons" id="riskButtons"></div>
+      <div class="custom-risk-row">
+        <input id="customRiskInput" type="number" min="0.0001" step="0.01" placeholder="Custom $" />
+        <button id="applyCustomRiskButton" type="button" class="btn-ghost">Apply</button>
+      </div>
+    </article>
+  </section>
 
-        <!-- Futures Tracker - Collapsible Side Panel -->
-        <div class="tracker-sidebar" id="trackerSidebar">
-          <button class="tracker-collapse-btn" id="trackerCollapseBtn" title="Toggle tracker panel">
-            <span class="collapse-icon">◀</span>
-          </button>
-          <section class="panel tracker-panel" aria-label="Futures strategy tracker">
-            <div class="panel-head tracker-head">
-              <div>
-                <h2>Futures Tracker</h2>
-                <p>Select coins and track confluence signals side-by-side.</p>
-              </div>
-              <div class="tracker-actions">
-                <button id="startTrackingButton" type="button" class="btn-secondary">Track</button>
-                <button id="stopTrackingButton" type="button" class="btn-ghost">Stop</button>
-              </div>
-            </div>
-            <div class="tracker-inputs">
-              <input id="coinSearchInput" placeholder="Search BTC, ETH, SOL…" autocomplete="off" />
-              <div class="coin-picker" id="coinPicker"></div>
-              <div class="add-coin-row">
-                <input id="customCoinInput" placeholder="e.g. NEAR" autocomplete="off" />
-                <button id="addCoinButton" type="button" class="btn-ghost">Add</button>
-              </div>
-            </div>
-            <p class="tracking-meta" id="trackingMeta">Not tracking yet</p>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th>Coin</th><th>Price</th><th>Signal</th>
-                    <th>Score</th><th>RSI</th><th>Position</th><th>Fresh</th>
-                  </tr>
-                </thead>
-                <tbody id="trackingBody">
-                  <tr><td colspan="7" class="empty-row">Select coins and start tracking.</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </section>
-        </div>
+  <!-- Metrics strip -->
+  <section class="metrics-row" aria-label="Market summary">
+    <article class="metric-card">
+      <span class="metric-label">Last Price</span>
+      <strong class="metric-value" id="lastPrice">—</strong>
+      <small class="metric-sub" id="changePct">—</small>
+    </article>
+    <article class="metric-card">
+      <span class="metric-label">Signal</span>
+      <strong class="metric-value" id="signalText">—</strong>
+      <small class="metric-sub" id="signalMeta">—</small>
+    </article>
+    <article class="metric-card">
+      <span class="metric-label">Score / RSI</span>
+      <strong class="metric-value" id="scoreText">—</strong>
+      <small class="metric-sub" id="rsiText">—</small>
+    </article>
+    <article class="metric-card">
+      <span class="metric-label">Position</span>
+      <strong class="metric-value" id="positionText">—</strong>
+      <small class="metric-sub" id="positionMeta">—</small>
+    </article>
+  </section>
 
-      </div><!-- /col-left -->
+  <!-- Main workspace -->
+  <main class="workspace">
 
-      <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+    <!-- Left column: chart + score/rsi + tracker -->
+    <div class="col-left">
 
-      <!-- Drawer: intelligence + settings + details -->
-      <aside id="sideDrawer" class="col-right side-drawer" aria-label="Dashboard menu" aria-hidden="true">
-        <div class="drawer-head">
+      <section class="panel chart-panel" aria-label="Price chart">
+        <div class="panel-head">
           <div>
-            <h2>Menu</h2>
-            <p>Settings, intelligence, and bot details.</p>
+            <h2 id="priceChartTitle">Price + Strategy Line</h2>
+            <p id="priceChartSub">Candlestick with Supertrend overlay</p>
           </div>
-          <button id="drawerCloseButton" type="button" class="btn-ghost">Close</button>
+          <div class="chart-legend">
+            <span class="legend-item long">Long entry ▲</span>
+            <span class="legend-item short">Short entry ▼</span>
+          </div>
         </div>
+        <div id="priceChart" class="lwc-container"></div>
+      </section>
 
-        <section class="panel settings-panel" aria-label="Dashboard settings">
+      <div class="score-rsi-row">
+        <section class="panel score-panel" aria-label="Strategy score">
           <div class="panel-head">
+            <h2 id="scoreChartTitle">Score</h2>
+            <p id="scoreChartText">—5 to +5 confluence vote</p>
+          </div>
+          <canvas id="scoreChart" height="140"></canvas>
+        </section>
+
+        <section class="panel rsi-panel" aria-label="RSI">
+          <div class="panel-head">
+            <h2>RSI</h2>
+            <p>Overbought above 70 · Oversold below 30</p>
+          </div>
+          <canvas id="rsiChart" height="140"></canvas>
+        </section>
+      </div>
+
+      <!-- Futures Tracker - Collapsible Side Panel -->
+      <div class="tracker-sidebar" id="trackerSidebar">
+        <button class="tracker-collapse-btn" id="trackerCollapseBtn" title="Toggle tracker panel">
+          <span class="collapse-icon">◀</span>
+        </button>
+        <section class="panel tracker-panel" aria-label="Futures strategy tracker">
+          <div class="panel-head tracker-head">
             <div>
-              <h2>Appearance</h2>
-              <p>Theme is remembered with your dashboard preferences.</p>
+              <h2>Futures Tracker</h2>
+              <p>Select coins and track confluence signals side-by-side.</p>
+            </div>
+            <div class="tracker-actions">
+              <button id="startTrackingButton" type="button" class="btn-secondary">Track</button>
+              <button id="stopTrackingButton" type="button" class="btn-ghost">Stop</button>
             </div>
           </div>
-          <label class="ctrl-label theme-field">
-            <span>Theme</span>
-            <select id="themeSelect">
-              <option value="dark">Dark</option>
-              <option value="light">Light</option>
-              <option value="contrast">High Contrast</option>
-            </select>
-          </label>
-        </section>
-
-        <!-- Intelligence panel -->
-        <section class="panel intelligence-panel" aria-label="Smart money intelligence">
-          <div class="panel-head">
-            <div>
-              <h2>Smart Money</h2>
-              <p>Binance Web3 signals · refreshed every 60s</p>
-            </div>
-            <div class="chain-select">
-              <select id="chainSelect">
-                <option value="CT_501">Solana</option>
-                <option value="56">BSC</option>
-              </select>
+          <div class="tracker-inputs">
+            <input id="coinSearchInput" placeholder="Search BTC, ETH, SOL…" autocomplete="off" />
+            <div class="coin-picker" id="coinPicker"></div>
+            <div class="add-coin-row">
+              <input id="customCoinInput" placeholder="e.g. NEAR" autocomplete="off" />
+              <button id="addCoinButton" type="button" class="btn-ghost">Add</button>
             </div>
           </div>
-
-          <div class="intel-sub-head">Signals</div>
-          <div class="table-wrap">
-            <table class="data-table intel-table" id="signalsTable">
-              <thead>
-                <tr>
-                  <th>Token</th><th>Dir</th><th>Wallets</th>
-                  <th>Max Gain</th><th>Exit %</th><th>Status</th>
-                </tr>
-              </thead>
-              <tbody id="signalsBody">
-                <tr><td colspan="6" class="empty-row">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="intel-sub-head" style="margin-top:12px">Smart Money Inflow Rank (24h)</div>
-          <div class="table-wrap">
-            <table class="data-table intel-table" id="rankTable">
-              <thead>
-                <tr>
-                  <th>#</th><th>Token</th><th>Price Chg</th>
-                  <th>Inflow</th><th>Wallets</th>
-                </tr>
-              </thead>
-              <tbody id="rankBody">
-                <tr><td colspan="5" class="empty-row">Loading…</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <!-- Details: strategy + trade state + events -->
-        <section class="panel details-panel" aria-label="Strategy details">
-          <div class="details-grid">
-            <div class="detail-block">
-              <h2>Strategy</h2>
-              <dl id="strategyList" class="def-list"></dl>
-            </div>
-            <div class="detail-block">
-              <h2>Trade State</h2>
-              <dl id="stateList" class="def-list"></dl>
-            </div>
-            <div class="detail-block events-block">
-              <h2>Bot Events</h2>
-              <ol id="eventList" class="event-list"></ol>
-            </div>
-          </div>
-        </section>
-
-        <!-- Trade Journal -->
-        <section class="panel journal-panel" aria-label="Trade journal">
-          <div class="panel-head">
-            <h2>Trade Journal</h2>
-            <button id="refreshJournalButton" type="button" class="btn-ghost">Refresh</button>
-          </div>
-          <div class="table-wrap">
-            <table class="data-table journal-table">
-              <thead>
-                <tr>
-                  <th>#</th><th>Pair</th><th>Side</th>
-                  <th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th>
-                </tr>
-              </thead>
-              <tbody id="journalBody">
-                <tr><td colspan="7" class="empty-row">No trades logged yet.</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-      </aside><!-- /side-drawer -->
-    </main>
-
-    <!-- Bottom section: Performance & Logs -->
-    <section class="bottom-section" aria-label="Performance and execution logs">
-      <div class="bottom-grid">
-        <!-- Active Positions -->
-        <section class="panel active-positions-panel" aria-label="Active positions on tracked coins">
-          <div class="panel-head">
-            <h2>Active Positions</h2>
-            <p>Live positions across tracked coins</p>
-          </div>
+          <p class="tracking-meta" id="trackingMeta">Not tracking yet</p>
           <div class="table-wrap">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Coin</th><th>Side</th><th>Qty</th>
-                  <th>Entry</th><th>Mark</th><th>SL</th><th>TP</th><th>PnL</th>
+                  <th>Coin</th>
+                  <th>Price</th>
+                  <th>Signal</th>
+                  <th>Score</th>
+                  <th>RSI</th>
+                  <th>Position</th>
+                  <th>Fresh</th>
                 </tr>
               </thead>
-              <tbody id="positionsBody">
-                <tr><td colspan="8" class="empty-row">No active positions on tracked coins.</td></tr>
+              <tbody id="trackingBody">
+                <tr>
+                  <td colspan="7" class="empty-row">Select coins and start tracking.</td>
+                </tr>
               </tbody>
             </table>
           </div>
         </section>
-
-        <!-- Performance Stats -->
-        <section class="panel performance-panel" aria-label="Trading performance">
-          <div class="panel-head">
-            <h2>Performance</h2>
-            <p>Win rate and statistics</p>
-          </div>
-          <div class="perf-grid">
-            <div class="perf-stat">
-              <span class="perf-label">Win Rate</span>
-              <strong class="perf-value" id="winRate">—</strong>
-            </div>
-            <div class="perf-stat">
-              <span class="perf-label">Total Trades</span>
-              <strong class="perf-value" id="totalTrades">—</strong>
-            </div>
-            <div class="perf-stat">
-              <span class="perf-label">Profit Factor</span>
-              <strong class="perf-value" id="profitFactor">—</strong>
-            </div>
-            <div class="perf-stat">
-              <span class="perf-label">Max Drawdown</span>
-              <strong class="perf-value" id="maxDrawdown">—</strong>
-            </div>
-          </div>
-        </section>
-
-        <!-- Execution Log -->
-        <section class="panel logs-panel" aria-label="Execution logs">
-          <div class="panel-head">
-            <h2>Execution Log</h2>
-            <p>Recent bot actions</p>
-          </div>
-          <div class="logs-container">
-            <ol id="executionLog" class="log-list"></ol>
-          </div>
-        </section>
       </div>
-    </section>
 
-    <script src="/app.js"></script>
-  </body>
+    </div><!-- /col-left -->
+
+    <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+
+    <!-- Drawer: intelligence + settings + details -->
+    <aside id="sideDrawer" class="col-right side-drawer" aria-label="Dashboard menu" aria-hidden="true">
+      <div class="drawer-head">
+        <div>
+          <h2>Menu</h2>
+          <p>Settings, intelligence, and bot details.</p>
+        </div>
+        <button id="drawerCloseButton" type="button" class="btn-ghost">Close</button>
+      </div>
+
+      <section class="panel settings-panel" aria-label="Dashboard settings">
+        <div class="panel-head">
+          <div>
+            <h2>Appearance</h2>
+            <p>Theme is remembered with your dashboard preferences.</p>
+          </div>
+        </div>
+        <label class="ctrl-label theme-field">
+          <span>Theme</span>
+          <select id="themeSelect">
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+            <option value="contrast">High Contrast</option>
+          </select>
+        </label>
+      </section>
+
+      <!-- Intelligence panel -->
+      <section class="panel intelligence-panel" aria-label="Smart money intelligence">
+        <div class="panel-head">
+          <div>
+            <h2>Smart Money</h2>
+            <p>Binance Web3 signals · refreshed every 60s</p>
+          </div>
+          <div class="chain-select">
+            <select id="chainSelect">
+              <option value="CT_501">Solana</option>
+              <option value="56">BSC</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="intel-sub-head">Signals</div>
+        <div class="table-wrap">
+          <table class="data-table intel-table" id="signalsTable">
+            <thead>
+              <tr>
+                <th>Token</th>
+                <th>Dir</th>
+                <th>Wallets</th>
+                <th>Max Gain</th>
+                <th>Exit %</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="signalsBody">
+              <tr>
+                <td colspan="6" class="empty-row">Loading…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="intel-sub-head" style="margin-top:12px">Smart Money Inflow Rank (24h)</div>
+        <div class="table-wrap">
+          <table class="data-table intel-table" id="rankTable">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Token</th>
+                <th>Price Chg</th>
+                <th>Inflow</th>
+                <th>Wallets</th>
+              </tr>
+            </thead>
+            <tbody id="rankBody">
+              <tr>
+                <td colspan="5" class="empty-row">Loading…</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Details: strategy + trade state + events -->
+      <section class="panel details-panel" aria-label="Strategy details">
+        <div class="details-grid">
+          <div class="detail-block">
+            <h2>Strategy</h2>
+            <dl id="strategyList" class="def-list"></dl>
+          </div>
+          <div class="detail-block">
+            <h2>Trade State</h2>
+            <dl id="stateList" class="def-list"></dl>
+          </div>
+          <div class="detail-block events-block">
+            <h2>Bot Events</h2>
+            <ol id="eventList" class="event-list"></ol>
+          </div>
+        </div>
+      </section>
+
+      <!-- Trade Journal -->
+      <section class="panel journal-panel" aria-label="Trade journal">
+        <div class="panel-head">
+          <h2>Trade Journal</h2>
+          <button id="refreshJournalButton" type="button" class="btn-ghost">Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table journal-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Pair</th>
+                <th>Side</th>
+                <th>Entry</th>
+                <th>Exit</th>
+                <th>PnL</th>
+                <th>Reason</th>
+              </tr>
+            </thead>
+            <tbody id="journalBody">
+              <tr>
+                <td colspan="7" class="empty-row">No trades logged yet.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+    </aside><!-- /side-drawer -->
+  </main>
+
+  <!-- Bottom section: Performance & Logs -->
+  <section class="bottom-section" aria-label="Performance and execution logs">
+    <div class="bottom-grid">
+      <!-- Active Positions -->
+      <section class="panel active-positions-panel" aria-label="Active positions on tracked coins">
+        <div class="panel-head">
+          <h2>Active Positions</h2>
+          <p>Live positions across tracked coins</p>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Coin</th>
+                <th>Side</th>
+                <th>Qty</th>
+                <th>Entry</th>
+                <th>Mark</th>
+                <th>SL</th>
+                <th>TP</th>
+                <th>PnL</th>
+              </tr>
+            </thead>
+            <tbody id="positionsBody">
+              <tr>
+                <td colspan="8" class="empty-row">No active positions on tracked coins.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Performance Stats -->
+      <section class="panel performance-panel" aria-label="Trading performance">
+        <div class="panel-head">
+          <h2>Performance</h2>
+          <p>Win rate and statistics</p>
+        </div>
+        <div class="perf-grid">
+          <div class="perf-stat">
+            <span class="perf-label">Win Rate</span>
+            <strong class="perf-value" id="winRate">—</strong>
+          </div>
+          <div class="perf-stat">
+            <span class="perf-label">Total Trades</span>
+            <strong class="perf-value" id="totalTrades">—</strong>
+          </div>
+          <div class="perf-stat">
+            <span class="perf-label">Profit Factor</span>
+            <strong class="perf-value" id="profitFactor">—</strong>
+          </div>
+          <div class="perf-stat">
+            <span class="perf-label">Max Drawdown</span>
+            <strong class="perf-value" id="maxDrawdown">—</strong>
+          </div>
+        </div>
+      </section>
+
+      <!-- Execution Log -->
+      <section class="panel logs-panel" aria-label="Execution logs">
+        <div class="panel-head">
+          <h2>Execution Log</h2>
+          <p>Recent bot actions</p>
+        </div>
+        <div class="logs-container">
+          <ol id="executionLog" class="log-list"></ol>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <script src="/app.js"></script>
+</div><!-- /page-content -->
+</body>
+
 </html>

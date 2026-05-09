@@ -25,6 +25,8 @@ const state = {
   theme: 'dark',
   targetLine: null,
   stopLine: null,
+  livePositions: [],
+  expertPicksInterval: null,
 };
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -95,6 +97,22 @@ const el = {
   market2:       $('market2Input'),
   trackedCoinsMenu: $('trackedCoinsMenu'),
   coinsMenuItems: $('coinsMenuItems'),
+  volScanButton: $('volScanButton'),
+  volScanBody:   $('volScanBody'),
+  volScanMeta:   $('volScanMeta'),
+  volSidebar:    $('volSidebar'),
+  volSidebarClose: $('volSidebarClose'),
+  actExpertPicks: $('actExpertPicks'),
+  expertSidebar:  $('expertSidebar'),
+  expertSidebarClose: $('expertSidebarClose'),
+  expertRefreshBtn: $('expertRefreshBtn'),
+  sentimentValue: $('sentimentValue'),
+  sentimentClass: $('sentimentClass'),
+  sentimentTime: $('sentimentTime'),
+  expertPosBody:  $('expertPosBody'),
+  expertSignalsTable: $('expertSignalsTable'),
+  actDashboard:  $('actDashboard'),
+  actVolScanner: $('actVolScanner'),
 };
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
@@ -102,9 +120,7 @@ function fmtPrice(v) {
   if (v == null) return '—';
   const n = parseFloat(v);
   if (isNaN(n)) return '—';
-  if (n >= 1000)  return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (n >= 1)     return n.toFixed(4);
-  return n.toFixed(8);
+  return String(n);
 }
 
 function fmtPct(v) {
@@ -425,7 +441,10 @@ function initPriceChart() {
       horzLines: { color: cssVar('--border-dim') || '#1e2430' },
     },
     crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
-    rightPriceScale: { borderColor: cssVar('--border') || '#252b34' },
+    rightPriceScale: {
+      borderColor: cssVar('--border') || '#252b34',
+      priceFormat: { minMove: 0.00000001, precision: 8 },
+    },
     timeScale: { borderColor: cssVar('--border') || '#252b34', timeVisible: true, secondsVisible: false },
     width: container.clientWidth,
     height: container.clientHeight,
@@ -471,8 +490,25 @@ function clearPositionLines() {
 function updatePositionLines(stateData) {
   if (!state.candleSeries) return;
   const side = stateData?.side;
-  const stopPx = stateData?.stop_px;
-  const targetPx = stateData?.target_px;
+  let stopPx = stateData?.stop_px;
+  let targetPx = stateData?.target_px;
+
+  // Prefer live exchange position TP/SL over paper state values
+  const currentCoin = (state.lastSnapshot?.coin || '').toUpperCase();
+  if (currentCoin && state.livePositions.length > 0) {
+    const livePos = state.livePositions.find(p =>
+      p.coin && p.coin.toUpperCase() === currentCoin && p.side === side
+    );
+    if (livePos) {
+      if (livePos.take_profit_trigger != null && Number.isFinite(parseFloat(livePos.take_profit_trigger))) {
+        targetPx = livePos.take_profit_trigger;
+      }
+      if (livePos.stop_loss_trigger != null && Number.isFinite(parseFloat(livePos.stop_loss_trigger))) {
+        stopPx = livePos.stop_loss_trigger;
+      }
+    }
+  }
+
   if (side !== 'LONG' && side !== 'SHORT') {
     clearPositionLines();
     return;
@@ -494,12 +530,12 @@ function updatePositionLines(stateData) {
         lineWidth: 2,
         lineStyle,
         axisLabelVisible: true,
-        title: 'Stop',
+        title: 'Stop ' + stopPx,
       });
     } catch {}
   } else {
     try {
-      state.stopLine.applyOptions({ price: parseFloat(stopPx), color: stopColor, title: 'Stop' });
+      state.stopLine.applyOptions({ price: parseFloat(stopPx), color: stopColor, title: 'Stop ' + stopPx });
     } catch {}
   }
 
@@ -511,12 +547,12 @@ function updatePositionLines(stateData) {
         lineWidth: 2,
         lineStyle,
         axisLabelVisible: true,
-        title: 'Target',
+        title: 'Target ' + targetPx,
       });
     } catch {}
   } else {
     try {
-      state.targetLine.applyOptions({ price: parseFloat(targetPx), color: targetColor, title: 'Target' });
+      state.targetLine.applyOptions({ price: parseFloat(targetPx), color: targetColor, title: 'Target ' + targetPx });
     } catch {}
   }
 }
@@ -846,6 +882,7 @@ async function loadAccount() {
 
     // Positions
     const positions = data.positions || [];
+    state.livePositions = positions;
     const totalPnl = positions.reduce((sum, p) => sum + (parseFloat(p.unrealized_pnl) || 0), 0);
     const pnlCls = totalPnl >= 0 ? 'score-pos' : 'score-neg';
     el.positionsCount.textContent = String(positions.length);
@@ -869,6 +906,11 @@ async function loadAccount() {
           <td class="${pnlCls}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
         </tr>`;
       }).join('');
+    }
+
+    // Re-draw chart position lines with live exchange data
+    if (state.lastSnapshot?.state) {
+      updatePositionLines(state.lastSnapshot.state);
     }
   } catch (err) {
     console.error('Account load failed', err);
@@ -903,6 +945,185 @@ async function loadTradeJournal() {
   } catch {
     el.journalBody.innerHTML = '<tr><td colspan="7" class="empty-row">Failed to load.</td></tr>';
   }
+}
+
+// ─── Volatility scanner ───────────────────────────────────────────────────────
+async function loadVolatilityScan() {
+  if (!el.volScanBody || !el.volScanButton) return;
+  el.volScanButton.disabled = true;
+  el.volScanButton.textContent = 'Scanning…';
+  el.volScanBody.innerHTML = '<tr><td colspan="8" class="empty-row">Scanning all futures coins…</td></tr>';
+  if (el.volScanMeta) el.volScanMeta.textContent = '';
+
+  try {
+    const res = await fetch('/api/volatility-scan');
+    const data = await res.json();
+    const coins = data.coins || [];
+
+    if (el.volScanMeta) {
+      el.volScanMeta.textContent = `· ${data.count || 0}/${data.total_scanned || 0} coins · ${data.elapsed_seconds || 0}s`;
+    }
+
+    if (coins.length === 0) {
+      el.volScanBody.innerHTML = '<tr><td colspan="8" class="empty-row">No coins found under $10.</td></tr>';
+      return;
+    }
+
+    // Find max ATR% for heat-map coloring
+    const maxAtr = Math.max(...coins.map(c => c.atr_pct || 0), 0.01);
+
+    el.volScanBody.innerHTML = coins.map(c => {
+      const chgCls = (c.change_pct || 0) >= 0 ? 'score-pos' : 'score-neg';
+      const heat = Math.min((c.atr_pct || 0) / maxAtr, 1);
+      const heatAlpha = (heat * 0.18).toFixed(3);
+      const heatBg = heat > 0.6 ? `rgba(38,196,133,${heatAlpha})` : heat > 0.3 ? `rgba(91,156,246,${heatAlpha})` : 'transparent';
+      return `<tr class="vol-row" data-coin="${c.coin}" data-pair="${c.pair}" data-market="${c.market}" style="background:${heatBg};cursor:pointer" title="Click to load ${c.coin}">
+        <td>${c.rank}</td>
+        <td><strong>${c.coin}</strong></td>
+        <td class="mono">${fmtPrice(c.price)}</td>
+        <td class="mono vol-atr">${c.atr_pct?.toFixed(2) ?? '—'}%</td>
+        <td class="mono">${c.range_pct?.toFixed(1) ?? '—'}%</td>
+        <td class="mono">${c.stddev_pct?.toFixed(3) ?? '—'}%</td>
+        <td class="mono">${fmtNum(c.volume_usd)}</td>
+        <td class="${chgCls}">${c.change_pct >= 0 ? '+' : ''}${c.change_pct?.toFixed(2) ?? '—'}%</td>
+      </tr>`;
+    }).join('');
+
+    // Click-to-load: clicking a row switches the main chart to that coin
+    el.volScanBody.querySelectorAll('.vol-row').forEach(row => {
+      row.addEventListener('click', () => {
+        const pair = row.dataset.pair;
+        const market = row.dataset.market;
+        if (pair && market) {
+          el.pair.value = pair;
+          el.market.value = market;
+          saveDashboardPreferences();
+          updateTrackedCoinsMenu();
+          loadSnapshot();
+          loadAccount();
+        }
+      });
+    });
+  } catch (err) {
+    console.error('Volatility scan failed', err);
+    el.volScanBody.innerHTML = '<tr><td colspan="8" class="empty-row">Scan failed. Check console.</td></tr>';
+  } finally {
+    el.volScanButton.disabled = false;
+    el.volScanButton.textContent = 'Scan';
+  }
+}
+
+// ─── Expert Picks ──────────────────────────────────────────────────────────────
+async function loadExpertPicks(forceRefresh = false) {
+  try {
+    const url = forceRefresh
+      ? '/api/expert-picks/recommendations?force=true'
+      : '/api/expert-picks/recommendations';
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    // Render sentiment
+    if (data.sentiment) {
+      const val = data.sentiment.value;
+      const cls = data.sentiment.classification || 'Unknown';
+      if (el.sentimentValue) {
+        el.sentimentValue.textContent = val !== null ? val : '—';
+        el.sentimentValue.className = 'sentiment-value ' + (val < 35 ? 'fear' : val > 65 ? 'greed' : 'neutral');
+      }
+      if (el.sentimentClass) el.sentimentClass.textContent = cls;
+      if (el.sentimentTime && data.sentiment.timestamp) {
+        const d = new Date(data.sentiment.timestamp * 1000);
+        el.sentimentTime.textContent = `Updated ${d.toLocaleTimeString()}`;
+      }
+    }
+
+    // Render positions recommendations
+    if (el.expertPosBody) {
+      const posRecs = data.positions_recommendations || [];
+      if (posRecs.length === 0) {
+        el.expertPosBody.innerHTML = '<tr><td colspan="4" class="empty-row">No active positions</td></tr>';
+      } else {
+        el.expertPosBody.innerHTML = posRecs.map(p => {
+          const rec = p.recommendation || '';
+          const recClass = rec.startsWith('CLOSE') ? 'rec-close' : rec === 'HOLD' ? 'rec-hold' : 'rec-watch';
+          return `<tr>
+            <td><strong>${p.coin}</strong></td>
+            <td><span class="pos-${p.position?.toLowerCase()}">${p.position}</span></td>
+            <td><span class="sig-${p.signal?.toLowerCase()}">${p.signal}</span></td>
+            <td><span class="${recClass}">${rec.replace('_', ' ')}</span></td>
+          </tr>`;
+        }).join('');
+      }
+    }
+
+    // Render top signals
+    if (el.expertSignalsTable) {
+      const topSig = data.top_signals || [];
+      if (topSig.length === 0) {
+        el.expertSignalsTable.innerHTML = '<tr><td colspan="4" class="empty-row">No signals available</td></tr>';
+      } else {
+        el.expertSignalsTable.innerHTML = topSig.map((s, i) => {
+          return `<tr>
+            <td>${i + 1}</td>
+            <td><strong>${s.coin}</strong></td>
+            <td><span class="sig-${s.action?.toLowerCase()}">${s.action}</span></td>
+            <td>${s.confidence || '—'}%</td>
+          </tr>`;
+        }).join('');
+      }
+    }
+  } catch (err) {
+    console.error('Expert Picks failed', err);
+  }
+}
+
+function toggleExpertSidebar(open) {
+  const isOpen = open ?? el.expertSidebar?.hidden;
+  if (!el.expertSidebar) return;
+  
+  // Close vol sidebar if opening expert sidebar
+  if (isOpen && el.volSidebar && !el.volSidebar.hidden) {
+    el.volSidebar.hidden = true;
+    el.actVolScanner?.setAttribute('aria-pressed', 'false');
+  }
+  
+  el.expertSidebar.hidden = !isOpen;
+
+  if (isOpen) {
+    loadExpertPicks();
+    if (!state.expertPicksInterval) {
+      state.expertPicksInterval = setInterval(() => loadExpertPicks(), 5 * 60 * 1000);
+    }
+    el.actExpertPicks?.setAttribute('aria-pressed', 'true');
+    el.actDashboard?.setAttribute('aria-pressed', 'false');
+  } else {
+    if (state.expertPicksInterval) {
+      clearInterval(state.expertPicksInterval);
+      state.expertPicksInterval = null;
+    }
+    el.actExpertPicks?.setAttribute('aria-pressed', 'false');
+  }
+}
+
+// ─── Activity bar / Volatility sidebar ────────────────────────────────────────
+function toggleVolSidebar(open) {
+  const isOpen = open ?? el.volSidebar?.hidden;
+  if (!el.volSidebar) return;
+  
+  // Close expert sidebar if opening vol sidebar
+  if (isOpen && el.expertSidebar && !el.expertSidebar.hidden) {
+    el.expertSidebar.hidden = true;
+    el.actExpertPicks?.setAttribute('aria-pressed', 'false');
+    if (state.expertPicksInterval) {
+      clearInterval(state.expertPicksInterval);
+      state.expertPicksInterval = null;
+    }
+  }
+  
+  el.volSidebar.hidden = !isOpen;
+  el.actVolScanner?.setAttribute('aria-pressed', isOpen ? 'true' : 'false');
+  el.actDashboard?.setAttribute('aria-pressed', isOpen ? 'false' : 'true');
 }
 
 // ─── Futures tracker ──────────────────────────────────────────────────────────
@@ -1093,6 +1314,32 @@ function wireEvents() {
   });
   el.refreshAccount.addEventListener('click', loadAccount);
   el.refreshJournal.addEventListener('click', loadTradeJournal);
+  if (el.volScanButton) {
+    el.volScanButton.addEventListener('click', loadVolatilityScan);
+  }
+  if (el.actVolScanner) {
+    el.actVolScanner.addEventListener('click', () => toggleVolSidebar(true));
+  }
+  if (el.actDashboard) {
+    el.actDashboard.addEventListener('click', () => {
+      toggleVolSidebar(false);
+      if (el.expertSidebar && !el.expertSidebar.hidden) {
+        toggleExpertSidebar(false);
+      }
+    });
+  }
+  if (el.volSidebarClose) {
+    el.volSidebarClose.addEventListener('click', () => toggleVolSidebar(false));
+  }
+  if (el.actExpertPicks) {
+    el.actExpertPicks.addEventListener('click', () => toggleExpertSidebar(true));
+  }
+  if (el.expertSidebarClose) {
+    el.expertSidebarClose.addEventListener('click', () => toggleExpertSidebar(false));
+  }
+  if (el.expertRefreshBtn) {
+    el.expertRefreshBtn.addEventListener('click', () => loadExpertPicks(true));
+  }
   el.startTracking.addEventListener('click', startTracking);
   el.stopTracking.addEventListener('click', stopTracking);
   
