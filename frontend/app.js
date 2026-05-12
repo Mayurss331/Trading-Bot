@@ -307,7 +307,7 @@ async function applyRuntimeConfig() {
   try {
     const res = await fetch('/api/health');
     const data = await res.json();
-    if (data.ok && data.place_orders === true) {
+    if (data.ok && data.place_orders === true && !localStorage.getItem(EXECUTION_PREF_KEY)) {
       state.realOrdersArmed = true;
       renderExecutionPreference();
     }
