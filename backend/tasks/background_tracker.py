@@ -13,10 +13,20 @@ from ..db.database import AsyncSessionLocal
 from ..db.models import UserSetting
 from ..db.persistence import store_tracker_signal_events
 from ..utils import clean, coin_from_pair, futures_market_for_coin, futures_pair_for_coin, make_cfg
+from strategies.base import StrategyContext
+from strategies.registry import get_strategy, normalize_strategy_id
 
 logger = logging.getLogger(__name__)
 
 _EXECUTION_STATE: dict[str, dict[str, object]] = {}
+EXECUTABLE_STRATEGIES = {
+    "confluence",
+    "trend_following",
+    "mean_reversion",
+    "mixed_consensus",
+    "volatility_squeeze",
+}
+SCANNER_ONLY_STRATEGIES = {"arbitrage", "funding_basis", "pairs_stat_arb"}
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -85,9 +95,29 @@ def _snapshot_one(coin: str, strategy_id: str, risk: float, lookback_days: int, 
     })
 
 
-def _execute_one(coin: str, risk: float, lookback_days: int, timeframe: str | None = None) -> list[str]:
+def _build_strategy_frame(strategy_id: str, bars: pd.DataFrame, cfg: object) -> pd.DataFrame:
+    ctx = StrategyContext(
+        pair=cfg.pair,
+        market=cfg.market,
+        mode=cfg.execution_mode,
+        risk=cfg.risk_dollars,
+        allow_shorts=cfg.allow_shorts,
+        extras={},
+    )
+    analysis = get_strategy(strategy_id)(bars, ctx)
+    frame = analysis.get("frame")
+    if not isinstance(frame, pd.DataFrame):
+        return pd.DataFrame()
+    return frame.dropna(subset=["Close"]).copy()
+
+
+def _execute_one(coin: str, strategy_id: str, risk: float, lookback_days: int, timeframe: str | None = None) -> list[str]:
     pair = futures_pair_for_coin(coin)
     market = futures_market_for_coin(coin)
+    strategy_id = normalize_strategy_id(strategy_id)
+    if strategy_id not in EXECUTABLE_STRATEGIES:
+        return [f"{pair}: background executor skipped scanner-only strategy {strategy_id}."]
+
     cfg = make_cfg(pair, market, "futures", risk, lookback_days, timeframe=timeframe)
     if not cfg.place_orders:
         return []
@@ -108,9 +138,9 @@ def _execute_one(coin: str, risk: float, lookback_days: int, timeframe: str | No
     if bars.empty:
         return [f"{pair}: no bars fetched for background execution."]
     bars = bars[bars.index <= latest_closed]
-    frame = bot.build_confluence_frame(bars)
+    frame = _build_strategy_frame(strategy_id, bars, cfg)
     if frame.empty:
-        return [f"{pair}: confluence warmup in progress."]
+        return [f"{pair}: {strategy_id} warmup in progress."]
 
     events: list[str] = []
     if last_ts is None:
@@ -120,7 +150,7 @@ def _execute_one(coin: str, risk: float, lookback_days: int, timeframe: str | No
             slot["last_ts"] = ts
         last_ts = slot["last_ts"]
         if isinstance(last_ts, pd.Timestamp):
-            events.append(f"{pair}: background executor bootstrapped to {bot._fmt_ts(last_ts)}.")
+            events.append(f"{pair}: {strategy_id} background executor bootstrapped to {bot._fmt_ts(last_ts)}.")
             state = bot.TradeState(realized_pnl=state.realized_pnl)
             slot["state"] = state
             for ev in bot.sync_futures_position_state(last_ts, state, cfg):
@@ -147,8 +177,9 @@ def _execute_one(coin: str, risk: float, lookback_days: int, timeframe: str | No
 async def _execute_saved_tracker_orders(settings: dict, coins: list[str], strategy_id: str, risk: float, lookback_days: int, timeframe: str | None = None) -> None:
     if str(settings.get("executionMode") or "").lower() != "real":
         return
-    if strategy_id != "confluence":
-        logger.info("Background executor skipped: strategy %s is scanner-only.", strategy_id)
+    strategy_id = normalize_strategy_id(strategy_id)
+    if strategy_id in SCANNER_ONLY_STRATEGIES or strategy_id not in EXECUTABLE_STRATEGIES:
+        logger.info("Background executor skipped: strategy %s is scanner-only or not executable.", strategy_id)
         return
     if not _env_bool("PLACE_ORDERS") and not _env_bool("COINDCX_PLACE_ORDERS") and not _env_bool("BOT_PLACE_ORDERS"):
         return
@@ -156,7 +187,7 @@ async def _execute_saved_tracker_orders(settings: dict, coins: list[str], strate
     max_symbols = max(1, min(int(float(os.getenv("BACKGROUND_EXECUTOR_MAX_SYMBOLS", "3"))), 12))
     for coin in coins[:max_symbols]:
         try:
-            events = await asyncio.to_thread(_execute_one, coin, risk, lookback_days, timeframe)
+            events = await asyncio.to_thread(_execute_one, coin, strategy_id, risk, lookback_days, timeframe)
             for event in events:
                 logger.info("Background executor: %s", event)
         except Exception as exc:

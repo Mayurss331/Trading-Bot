@@ -96,7 +96,7 @@ async def lifespan(app: FastAPI):
         )
         logger.info("Background futures tracker enabled (every %ss).", tracker_seconds)
     scheduler.start()
-    logger.info("APScheduler started (candle aggregation every 5 min).")
+    logger.info("APScheduler started (15m candle aggregation poll every 5 min).")
 
     yield
 

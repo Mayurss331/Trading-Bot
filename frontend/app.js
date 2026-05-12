@@ -2,6 +2,11 @@
 
 const EXECUTION_PREF_KEY = 'coindcx-dashboard.execution-mode';
 const DASHBOARD_PREF_KEY = 'coindcx-dashboard.preferences';
+const DEFAULT_TIMEFRAME = '15m';
+
+function normalizeTimeframe() {
+  return DEFAULT_TIMEFRAME;
+}
 
 // ─── State ───────────────────────────────────────────────────────────────────
 const state = {
@@ -240,7 +245,7 @@ function saveDashboardPreferences() {
     mode: el.mode.value,
     risk: el.risk.value,
     lookback: el.lookback.value,
-    timeframe: el.timeframe?.value || '5m',
+    timeframe: normalizeTimeframe(el.timeframe?.value),
     pair2: el.pair2?.value?.trim() || '',
     market2: el.market2?.value?.trim() || '',
     chain: el.chainSelect?.value || 'CT_501',
@@ -304,7 +309,7 @@ async function applyDashboardPreferences() {
   setValue(el.mode, prefs.mode);
   setValue(el.risk, prefs.risk);
   setValue(el.lookback, prefs.lookback);
-  setValue(el.timeframe, prefs.timeframe || '5m');
+  setValue(el.timeframe, normalizeTimeframe(prefs.timeframe));
   setValue(el.pair2, prefs.pair2);
   setValue(el.market2, prefs.market2);
   setValue(el.chainSelect, prefs.chain);
@@ -674,7 +679,7 @@ async function loadSnapshot() {
   const mode     = el.mode.value || 'futures';
   const risk     = parseFloat(el.risk.value) || 10;
   const lookback = parseInt(el.lookback.value) || 3;
-  const timeframe = el.timeframe?.value || '5m';
+  const timeframe = normalizeTimeframe(el.timeframe?.value);
   const pair2    = el.pair2?.value?.trim() || '';
   const market2  = el.market2?.value?.trim() || '';
 
@@ -701,7 +706,7 @@ async function loadSnapshot() {
   // Feed / title
   el.feedText.textContent = `Feed: ${data.used_pair || pair} via ${data.used_source || '—'} · ${data.freshness_minutes?.toFixed(1) ?? '?'}m ago`;
   el.priceChartTitle.textContent = `${data.coin || 'Price'} · ${data.strategy?.chart_label || 'Strategy'}`;
-  const tfLabel = data.timeframe || (el.timeframe?.value || '5m');
+  const tfLabel = data.timeframe || normalizeTimeframe(el.timeframe?.value);
   el.priceChartSub.textContent = `${data.strategy?.name || ''} · ${data.mode?.toUpperCase()} · ${tfLabel}`;
 
   const stats = data.stats || {};
@@ -1163,7 +1168,7 @@ async function loadTracking() {
   if (!coins) return;
   const strategy = el.strategy.value || 'confluence';
   const risk = parseFloat(el.risk.value) || 10;
-  const timeframe = el.timeframe?.value || '5m';
+  const timeframe = normalizeTimeframe(el.timeframe?.value);
   el.trackingMeta.textContent = `Tracking ${state.selectedCoins.size} coin(s)… (last update: ${new Date().toLocaleTimeString()})`;
   try {
     const res = await fetch(`/api/track?coins=${encodeURIComponent(coins)}&strategy=${strategy}&risk=${risk}&lookback_days=2&timeframe=${encodeURIComponent(timeframe)}`);

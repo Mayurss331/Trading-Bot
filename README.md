@@ -8,7 +8,7 @@ The CoinDCX live bot lives at:
 Trading-Bot/Crypto/live_confluence_monitor.py
 ```
 
-It uses CoinDCX public market data for 5-minute candles/trades, calculates a
+It uses CoinDCX public market data for 15-minute candles/trades, calculates a
 confluence score from Supertrend, EMA/RSI, MACD, Bollinger Bands, and RSI, then
 prints paper ENTRY / EXIT signals. Live orders are disabled unless
 `--place-orders` is passed.

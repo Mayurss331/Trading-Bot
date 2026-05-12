@@ -8,7 +8,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-import aiohttp
+import httpx
 from fastapi import APIRouter, Query
 from fastapi.responses import JSONResponse
 
@@ -35,13 +35,12 @@ async def _fetch_with_retry(url: str, headers: dict | None = None, timeout: int 
     """Fetch URL with retry logic."""
     for attempt in range(2):
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=timeout), ssl=False) as resp:
-                    if resp.status == 200:
-                        return await resp.json()
-                    else:
-                        logger.warning(f"HTTP {resp.status} from {url}")
-        except asyncio.TimeoutError:
+            async with httpx.AsyncClient(timeout=timeout, verify=False) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200:
+                    return resp.json()
+                logger.warning(f"HTTP {resp.status_code} from {url}")
+        except httpx.TimeoutException:
             logger.warning(f"Timeout fetching {url}, attempt {attempt + 1}")
         except Exception as e:
             logger.warning(f"Error fetching {url}: {e}")

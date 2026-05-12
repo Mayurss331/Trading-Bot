@@ -1,4 +1,4 @@
-"""APScheduler job: fetch 5-minute candles and persist them to SQLite."""
+"""APScheduler job: fetch 15-minute candles and persist them to SQLite."""
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +23,7 @@ TRACKED_PAIRS = [
 def _fetch_bars_sync(pair: str) -> pd.DataFrame:
     try:
         bars, *_ = bot.fetch_closed_bars(pair, pair.replace("B-", "").replace("_USDT", "USDT"),
-                                         lookback_days=1, execution_mode="futures", timeframe="5m")
+                                         lookback_days=1, execution_mode="futures", timeframe="15m")
         return bars
     except Exception as exc:
         logger.debug("Candle fetch failed for %s: %s", pair, exc)

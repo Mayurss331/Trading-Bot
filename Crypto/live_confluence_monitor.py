@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Live Confluence Monitor (CoinDCX, IST, 5m)
+Live Confluence Monitor (CoinDCX, IST, 15m)
 ==========================================
-Continuously pulls CoinDCX 5m candles, computes confluence score, and emits
+Continuously pulls CoinDCX 15m candles, computes confluence score, and emits
 ENTRY / EXIT signals with fixed-dollar risk management.
 
 Data source:
@@ -51,14 +51,11 @@ IST = ZoneInfo("Asia/Kolkata")
 PUBLIC_BASE = "https://public.coindcx.com"
 PRIVATE_BASE = "https://api.coindcx.com"
 
-TIMEFRAME = "5m"
-BAR_FREQ = "5min"
-BAR_MINUTES = 5
+TIMEFRAME = "15m"
+BAR_FREQ = "15min"
+BAR_MINUTES = 15
 SUPPORTED_TIMEFRAMES = {
-    "5m": 5,
     "15m": 15,
-    "1h": 60,
-    "4h": 240,
 }
 MIN_WARMUP_BARS = 30
 
@@ -1833,6 +1830,53 @@ def sync_futures_position_state(ts: pd.Timestamp, state: TradeState, cfg: Runtim
     return events
 
 
+def _row_score(row: pd.Series) -> int:
+    value = row.get("score", 0)
+    try:
+        value = 0.0 if pd.isna(value) else float(value)
+    except (TypeError, ValueError):
+        return 0
+    if not np.isfinite(value):
+        return 0
+    return int(value)
+
+
+def _row_bool(row: pd.Series, key: str) -> bool:
+    value = row.get(key, False)
+    if pd.isna(value):
+        return False
+    return bool(value)
+
+
+def _row_entry_side(row: pd.Series, score: int) -> int:
+    value = row.get("entry_side", 0)
+    try:
+        side = 0 if pd.isna(value) else int(float(value))
+    except (TypeError, ValueError):
+        side = 0
+    if side in (1, -1):
+        return side
+    if "entry_side" in row.index:
+        return 0
+    if score >= LONG_ENTRY_SCORE:
+        return 1
+    if score <= SHORT_ENTRY_SCORE:
+        return -1
+    return 0
+
+
+def _row_should_exit(row: pd.Series, side: int, score: int) -> bool:
+    if side == 1:
+        if "exit_long" in row.index:
+            return _row_bool(row, "exit_long")
+        return score < LONG_EXIT_SCORE
+    if side == -1:
+        if "exit_short" in row.index:
+            return _row_bool(row, "exit_short")
+        return score > SHORT_EXIT_SCORE
+    return False
+
+
 def process_closed_bar_futures(
     ts: pd.Timestamp,
     row: pd.Series,
@@ -1840,7 +1884,7 @@ def process_closed_bar_futures(
     cfg: RuntimeConfig,
     history: pd.DataFrame | None = None,
 ) -> List[str]:
-    score = int(row["score"])
+    score = _row_score(row)
     close = float(row["Close"])
     high = float(row["High"])
     low = float(row["Low"])
@@ -1851,15 +1895,11 @@ def process_closed_bar_futures(
         return process_closed_bar(ts, row, state, RuntimeConfig(**{**cfg.__dict__, "execution_mode": "spot"}), history)
 
     if state.side == 0:
-        signal_side = 0
-        if score >= LONG_ENTRY_SCORE:
-            signal_side = 1
-        elif score <= SHORT_ENTRY_SCORE:
-            if not cfg.allow_shorts:
-                events.append(f"[{_fmt_ts(ts)}] SHORT SIGNAL score={score:+d} ignored (futures shorts disabled).")
-                return events
-            signal_side = -1
-        if signal_side == 0:
+        signal_side = _row_entry_side(row, score)
+        if signal_side == -1 and not cfg.allow_shorts:
+            events.append(f"[{_fmt_ts(ts)}] SHORT SIGNAL score={score:+d} ignored (futures shorts disabled).")
+            return events
+        if signal_side not in (1, -1):
             return events
 
         plan = _build_trade_plan(signal_side, ts, row, history, cfg)
@@ -2013,11 +2053,7 @@ def process_closed_bar_futures(
             else:
                 events.append(f"[{_fmt_ts(ts)}] TRAIL {_fmt_side(state.side)} FAILED | {broker_msg}")
 
-    should_exit = None
-    if state.side == 1 and score < LONG_EXIT_SCORE:
-        should_exit = "SIGNAL"
-    elif state.side == -1 and score > SHORT_EXIT_SCORE:
-        should_exit = "SIGNAL"
+    should_exit = "SIGNAL" if _row_should_exit(row, state.side, score) else None
 
     if should_exit and state.position_id:
         if state.exit_pending:
@@ -2050,7 +2086,7 @@ def process_closed_bar(
     if cfg.execution_mode == "futures":
         return process_closed_bar_futures(ts, row, state, cfg, history)
 
-    score = int(row["score"])
+    score = _row_score(row)
     close = float(row["Close"])
     high = float(row["High"])
     low = float(row["Low"])
@@ -2058,7 +2094,8 @@ def process_closed_bar(
     events: List[str] = []
 
     if state.side == 0:
-        if score >= LONG_ENTRY_SCORE:
+        signal_side = _row_entry_side(row, score)
+        if signal_side == 1:
             preview = TradeState(
                 side=state.side,
                 trade_id=state.trade_id,
@@ -2127,7 +2164,7 @@ def process_closed_bar(
             if cap_msg:
                 events.append(f"[{_fmt_ts(ts)}] {cap_msg}")
             events.append(f"[{_fmt_ts(ts)}] {broker_msg}")
-        elif score <= SHORT_ENTRY_SCORE:
+        elif signal_side == -1:
             if not cfg.allow_shorts:
                 events.append(f"[{_fmt_ts(ts)}] SHORT SIGNAL score={score:+d} ignored (spot-only mode).")
                 return events
@@ -2225,7 +2262,7 @@ def process_closed_bar(
         elif high >= state.target_px:
             should_exit = "TARGET"
             exit_px = state.target_px
-        elif score < LONG_EXIT_SCORE:
+        elif _row_should_exit(row, 1, score):
             should_exit = "SIGNAL"
             exit_px = close
 
@@ -2278,7 +2315,7 @@ def process_closed_bar(
         elif low <= state.target_px:
             should_exit = "TARGET"
             exit_px = state.target_px
-        elif score > SHORT_EXIT_SCORE:
+        elif _row_should_exit(row, -1, score):
             should_exit = "SIGNAL"
             exit_px = close
 
@@ -2583,7 +2620,7 @@ def parse_args() -> RuntimeConfig:
         "--timeframe",
         type=str,
         default=TIMEFRAME,
-        help="Candle timeframe (5m, 15m, 1h, 4h)",
+        help="Candle timeframe (15m)",
     )
     parser.add_argument("--api-key", type=str, default=None, help="API key (or use COINDCX_API_KEY env var)")
     parser.add_argument("--api-secret", type=str, default=None, help="API secret (or use COINDCX_API_SECRET env var)")
