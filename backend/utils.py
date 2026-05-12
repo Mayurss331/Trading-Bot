@@ -101,14 +101,16 @@ def float_param(query: dict, name: str, default: float, low: float, high: float)
 # Bot config + payload helpers
 # ---------------------------------------------------------------------------
 
-def make_cfg(pair: str, market: str, mode: str, risk: float, lookback_days: int, timeframe: str | None = None) -> object:
+def make_cfg(pair: str, market: str, mode: str, risk: float, lookback_days: int, timeframe: str | None = None, exec_mode: str = "") -> object:
     tf, _, _ = bot._normalize_timeframe(timeframe)
+    _env_place = env_bool("PLACE_ORDERS") or env_bool("COINDCX_PLACE_ORDERS") or env_bool("BOT_PLACE_ORDERS")
+    place_orders = False if exec_mode == "paper" else _env_place
     return bot.RuntimeConfig(
         pair=pair,
         market=market,
         risk_dollars=risk,
         poll_seconds=15,
-        place_orders=env_bool("PLACE_ORDERS") or env_bool("COINDCX_PLACE_ORDERS") or env_bool("BOT_PLACE_ORDERS"),
+        place_orders=place_orders,
         allow_shorts=mode in {"margin", "futures"},
         execution_mode=mode,
         leverage=max(1.0, min(env_float("LEVERAGE", 1.0), env_float("MAX_LEVERAGE", env_float("LEVERAGE", 1.0)))),

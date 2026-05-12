@@ -32,6 +32,7 @@ const state = {
   stopLine: null,
   livePositions: [],
   expertPicksInterval: null,
+  reportsFilter: 'all',
 };
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -118,6 +119,22 @@ const el = {
   expertSignalsTable: $('expertSignalsTable'),
   actDashboard:  $('actDashboard'),
   actVolScanner: $('actVolScanner'),
+  actReports:    $('actReports'),
+  reportsSidebar: $('reportsSidebar'),
+  reportsSidebarClose: $('reportsSidebarClose'),
+  reportsFilterGroup: $('reportsFilterGroup'),
+  reportsRefreshBtn: $('reportsRefreshBtn'),
+  reportsOverview: $('reportsOverview'),
+  reportsTableBody: $('reportsTableBody'),
+  rStatTotal:    $('rStatTotal'),
+  rStatWinRate:  $('rStatWinRate'),
+  rStatNetPnl:   $('rStatNetPnl'),
+  rStatPF:       $('rStatPF'),
+  rStatDD:       $('rStatDD'),
+  rStatDur:      $('rStatDur'),
+  reportEmailInput: $('reportEmailInput'),
+  btnSendReport: $('btnSendReport'),
+  toastMsg:      $('toastMsg'),
 };
 
 // ─── Formatting helpers ───────────────────────────────────────────────────────
@@ -689,6 +706,7 @@ async function loadSnapshot() {
       `&strategy=${strategy}&mode=${mode}&risk=${risk}&lookback_days=${lookback}&timeframe=${encodeURIComponent(timeframe)}`;
     if (pair2) url += `&pair2=${encodeURIComponent(pair2)}`;
     if (market2) url += `&market2=${encodeURIComponent(market2)}`;
+    url += `&exec_mode=${state.realOrdersArmed ? 'real' : 'paper'}`;
     const res = await fetch(url);
     data = await res.json();
   } catch (err) {
@@ -1086,13 +1104,17 @@ async function loadExpertPicks(forceRefresh = false) {
 function toggleExpertSidebar(open) {
   const isOpen = open ?? el.expertSidebar?.hidden;
   if (!el.expertSidebar) return;
-  
-  // Close vol sidebar if opening expert sidebar
+
+  // Close other sidebars if opening expert sidebar
   if (isOpen && el.volSidebar && !el.volSidebar.hidden) {
     el.volSidebar.hidden = true;
     el.actVolScanner?.setAttribute('aria-pressed', 'false');
   }
-  
+  if (isOpen && el.reportsSidebar && !el.reportsSidebar.hidden) {
+    el.reportsSidebar.hidden = true;
+    el.actReports?.setAttribute('aria-pressed', 'false');
+  }
+
   el.expertSidebar.hidden = !isOpen;
 
   if (isOpen) {
@@ -1115,8 +1137,8 @@ function toggleExpertSidebar(open) {
 function toggleVolSidebar(open) {
   const isOpen = open ?? el.volSidebar?.hidden;
   if (!el.volSidebar) return;
-  
-  // Close expert sidebar if opening vol sidebar
+
+  // Close other sidebars if opening vol sidebar
   if (isOpen && el.expertSidebar && !el.expertSidebar.hidden) {
     el.expertSidebar.hidden = true;
     el.actExpertPicks?.setAttribute('aria-pressed', 'false');
@@ -1125,10 +1147,142 @@ function toggleVolSidebar(open) {
       state.expertPicksInterval = null;
     }
   }
-  
+  if (isOpen && el.reportsSidebar && !el.reportsSidebar.hidden) {
+    el.reportsSidebar.hidden = true;
+    el.actReports?.setAttribute('aria-pressed', 'false');
+  }
+
   el.volSidebar.hidden = !isOpen;
   el.actVolScanner?.setAttribute('aria-pressed', isOpen ? 'true' : 'false');
   el.actDashboard?.setAttribute('aria-pressed', isOpen ? 'false' : 'true');
+}
+
+// ─── Reports sidebar ──────────────────────────────────────────────────────────
+function toggleReportsSidebar(open) {
+  const isOpen = open ?? el.reportsSidebar?.hidden;
+  if (!el.reportsSidebar) return;
+
+  // Close other sidebars
+  if (isOpen && el.volSidebar && !el.volSidebar.hidden) {
+    el.volSidebar.hidden = true;
+    el.actVolScanner?.setAttribute('aria-pressed', 'false');
+    el.actDashboard?.setAttribute('aria-pressed', 'true');
+  }
+  if (isOpen && el.expertSidebar && !el.expertSidebar.hidden) {
+    el.expertSidebar.hidden = true;
+    el.actExpertPicks?.setAttribute('aria-pressed', 'false');
+    if (state.expertPicksInterval) {
+      clearInterval(state.expertPicksInterval);
+      state.expertPicksInterval = null;
+    }
+  }
+
+  el.reportsSidebar.hidden = !isOpen;
+  el.actReports?.setAttribute('aria-pressed', isOpen ? 'true' : 'false');
+}
+
+function showToast(msg, type = 'ok') {
+  const t = el.toastMsg;
+  if (!t) return;
+  t.textContent = msg;
+  t.className = `toast-msg toast-${type} show`;
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.classList.remove('show'); }, type === 'ok' ? 6000 : 4000);
+}
+
+async function loadReportsOverview() {
+  const exec = state.reportsFilter === 'all' ? '' : state.reportsFilter;
+  try {
+    const res = await fetch(`/api/reports/overview?exec_mode=${exec}`);
+    const d = await res.json();
+    if (!d.ok) return;
+    if (el.rStatTotal) el.rStatTotal.textContent = d.total_trades ?? '—';
+    if (el.rStatWinRate) el.rStatWinRate.textContent = d.win_rate != null ? d.win_rate.toFixed(1) + '%' : '—';
+    if (el.rStatNetPnl) {
+      const v = d.net_pnl;
+      el.rStatNetPnl.textContent = v != null ? (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(2) : '—';
+      el.rStatNetPnl.className = 'report-stat-value ' + (v > 0 ? 'pnl-pos' : v < 0 ? 'pnl-neg' : '');
+    }
+    if (el.rStatPF) el.rStatPF.textContent = d.profit_factor != null ? d.profit_factor.toFixed(2) : '—';
+    if (el.rStatDD) el.rStatDD.textContent = d.max_drawdown != null ? '$' + d.max_drawdown.toFixed(2) : '—';
+    if (el.rStatDur) el.rStatDur.textContent = d.avg_duration_minutes != null ? Math.round(d.avg_duration_minutes) + ' min' : '—';
+  } catch (err) {
+    console.error('Reports overview failed', err);
+  }
+}
+
+async function loadReportsTrades() {
+  const exec = state.reportsFilter === 'all' ? '' : state.reportsFilter;
+  try {
+    const res = await fetch(`/api/reports/trades?exec_mode=${exec}&limit=100`);
+    const d = await res.json();
+    if (!d.ok || !el.reportsTableBody) return;
+    const trades = d.trades || [];
+    if (trades.length === 0) {
+      el.reportsTableBody.innerHTML = '<tr><td colspan="11" class="empty-row">No trades recorded.</td></tr>';
+      return;
+    }
+    el.reportsTableBody.innerHTML = trades.map((t, i) => {
+      const side = t.side === 1 ? '<span class="pos-long">LONG</span>' : t.side === -1 ? '<span class="pos-short">SHORT</span>' : '—';
+      const pnl = t.pnl != null
+        ? `<span class="${t.pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${t.pnl >= 0 ? '+' : ''}$${parseFloat(t.pnl).toFixed(2)}</span>`
+        : '—';
+      const modeBadge = t.execution_mode
+        ? `<span class="mode-badge mode-${t.execution_mode}">${t.execution_mode}</span>`
+        : '—';
+      const fmtTs = v => v ? v.slice(0, 16).replace('T', ' ') : '—';
+      const fmtPx = v => v != null ? parseFloat(v).toFixed(4) : '—';
+      return `<tr>
+        <td>${i + 1}</td>
+        <td><strong>${t.pair || '—'}</strong></td>
+        <td>${side}</td>
+        <td>${modeBadge}</td>
+        <td>${fmtTs(t.entry_ts)}</td>
+        <td>${fmtTs(t.exit_ts)}</td>
+        <td>${fmtPx(t.entry_px)}</td>
+        <td>${fmtPx(t.exit_px)}</td>
+        <td>${t.qty != null ? parseFloat(t.qty).toFixed(4) : '—'}</td>
+        <td>${pnl}</td>
+        <td>${t.exit_reason || '—'}</td>
+      </tr>`;
+    }).join('');
+  } catch (err) {
+    console.error('Reports trades failed', err);
+  }
+}
+
+async function loadReports() {
+  await Promise.all([loadReportsOverview(), loadReportsTrades()]);
+}
+
+async function sendReport() {
+  const email = (el.reportEmailInput?.value || '').trim();
+  if (!email || !email.includes('@')) {
+    showToast('Enter a valid email address.', 'err');
+    return;
+  }
+  const btn = el.btnSendReport;
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const res = await fetch('/api/reports/send-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ to: email }),
+    });
+    const d = await res.json();
+    if (d.ok) {
+      const parts = d.paper_count + d.real_count > 0
+        ? `${d.paper_count + d.real_count} trade(s) across ${[d.paper_count && 'paper', d.real_count && 'real'].filter(Boolean).join(' & ')} — PDF attached`
+        : 'No trades yet — summary sent';
+      showToast(`✓ Report sent to ${email}. ${parts}.`, 'ok');
+    } else {
+      showToast(d.message || 'Failed to send report.', 'err');
+    }
+  } catch (err) {
+    showToast('Network error — could not send report.', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Send Now'; }
+  }
 }
 
 // ─── Futures tracker ──────────────────────────────────────────────────────────
@@ -1171,7 +1325,7 @@ async function loadTracking() {
   const timeframe = normalizeTimeframe(el.timeframe?.value);
   el.trackingMeta.textContent = `Tracking ${state.selectedCoins.size} coin(s)… (last update: ${new Date().toLocaleTimeString()})`;
   try {
-    const res = await fetch(`/api/track?coins=${encodeURIComponent(coins)}&strategy=${strategy}&risk=${risk}&lookback_days=2&timeframe=${encodeURIComponent(timeframe)}`);
+    const res = await fetch(`/api/track?coins=${encodeURIComponent(coins)}&strategy=${strategy}&risk=${risk}&lookback_days=2&timeframe=${encodeURIComponent(timeframe)}&exec_mode=${state.realOrdersArmed ? 'real' : 'paper'}`);
     const data = await res.json();
     const rows = data.tracked || [];
     if (rows.length === 0) {
@@ -1344,6 +1498,28 @@ function wireEvents() {
   }
   if (el.expertRefreshBtn) {
     el.expertRefreshBtn.addEventListener('click', () => loadExpertPicks(true));
+  }
+  if (el.actReports) {
+    el.actReports.addEventListener('click', () => toggleReportsSidebar(true));
+  }
+  if (el.reportsSidebarClose) {
+    el.reportsSidebarClose.addEventListener('click', () => toggleReportsSidebar(false));
+  }
+  if (el.reportsRefreshBtn) {
+    el.reportsRefreshBtn.addEventListener('click', () => loadReports());
+  }
+  if (el.reportsFilterGroup) {
+    el.reportsFilterGroup.addEventListener('click', e => {
+      const btn = e.target.closest('.reports-filter-btn');
+      if (!btn) return;
+      el.reportsFilterGroup.querySelectorAll('.reports-filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.reportsFilter = btn.dataset.filter || 'all';
+      loadReports();
+    });
+  }
+  if (el.btnSendReport) {
+    el.btnSendReport.addEventListener('click', () => sendReport());
   }
   el.startTracking.addEventListener('click', startTracking);
   el.stopTracking.addEventListener('click', stopTracking);

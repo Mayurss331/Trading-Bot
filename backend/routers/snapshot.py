@@ -15,7 +15,7 @@ from sqlalchemy import select
 from ..bot_loader import bot, ROOT
 from ..db.database import AsyncSessionLocal
 from ..db.models import Trade
-from ..db.persistence import store_signal_event, store_tracker_signal_events
+from ..db.persistence import store_signal_event, store_tracker_signal_events, store_trade
 from ..utils import (
     bars_payload,
     clean,
@@ -145,8 +145,9 @@ def _sync_build_snapshot(
     lookback_days: int, limit: int, risk: float,
     pair2: str | None = None, market2: str | None = None,
     timeframe: str | None = None,
+    exec_mode: str = "",
 ) -> dict:
-    cfg = make_cfg(pair, market, mode, risk, lookback_days, timeframe=timeframe)
+    cfg = make_cfg(pair, market, mode, risk, lookback_days, timeframe=timeframe, exec_mode=exec_mode)
     bars, latest_closed, used_pair, used_source = bot.fetch_closed_bars(
         cfg.pair,
         cfg.market,
@@ -276,6 +277,7 @@ async def snapshot(
     pair2: str = "",
     market2: str = "",
     timeframe: str = "",
+    exec_mode: str = "",
 ) -> JSONResponse:
     if not market:
         market = bot.derive_market_from_pair(pair) or DEFAULT_MARKET
@@ -285,16 +287,19 @@ async def snapshot(
     limit = max(60, min(limit, 1000))
     risk = max(0.01, min(risk, 1_000_000.0))
     tf, _, _ = bot._normalize_timeframe(timeframe or None)
+    exec_mode = exec_mode.lower() if exec_mode.lower() in {"paper", "real"} else ""
 
     result = await asyncio.to_thread(
         _sync_build_snapshot, pair, market, strategy_id, mode, lookback_days, limit, risk,
         pair2=pair2 or None, market2=market2 or None,
-        timeframe=tf,
+        timeframe=tf, exec_mode=exec_mode,
     )
     payload = clean(result)
     if isinstance(payload, dict):
         payload["timeframe"] = tf
     await store_signal_event(payload)
+    for trade in bot.drain_completed_trades():
+        await store_trade(trade)
     return JSONResponse(payload)
 
 
@@ -346,11 +351,13 @@ async def track(
     risk: float = 10.0,
     lookback_days: int = 2,
     timeframe: str = "",
+    exec_mode: str = "",
 ) -> JSONResponse:
     strategy_id = normalize_strategy_id(strategy)
     risk = max(0.01, min(risk, 1_000_000.0))
     lookback_days = max(1, min(lookback_days, 14))
     tf, _, _ = bot._normalize_timeframe(timeframe or None)
+    exec_mode = exec_mode.lower() if exec_mode.lower() in {"paper", "real"} else ""
 
     coin_list = []
     for item in coins.replace(" ", "").split(","):
@@ -375,6 +382,7 @@ async def track(
                 80,
                 risk,
                 timeframe=tf,
+                exec_mode=exec_mode,
             )
         except Exception as exc:
             return {"ok": False, "coin": coin, "pair": pair, "market": market, "message": str(exc)}
@@ -409,6 +417,8 @@ async def track(
     rows = await asyncio.gather(*[_fetch_one(c) for c in coin_list], return_exceptions=False)
     clean_rows = clean(list(rows))
     await store_tracker_signal_events(clean_rows)
+    for trade in bot.drain_completed_trades():
+        await store_trade(trade)
     return JSONResponse(clean({
         "ok": True,
         "mode": "futures",

@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
 from .database import AsyncSessionLocal
-from .models import AccountSnapshot, PositionSnapshot, SignalEvent, UserSetting
+from .models import AccountSnapshot, PositionSnapshot, SignalEvent, Trade, UserSetting
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -29,6 +29,28 @@ async def save_user_setting(key: str, payload: dict) -> None:
             )
         )
         await db.execute(stmt)
+        await db.commit()
+
+
+async def store_trade(t: dict) -> None:
+    async with AsyncSessionLocal() as db:
+        db.add(Trade(
+            pair=str(t.get("pair") or ""),
+            side=int(t.get("side") or 0),
+            entry_ts=t.get("entry_ts"),
+            exit_ts=t.get("exit_ts"),
+            entry_px=float(t.get("entry_px") or 0.0),
+            exit_px=_float_or_none(t.get("exit_px")),
+            stop_px=float(t.get("stop_px") or 0.0),
+            target_px=float(t.get("target_px") or 0.0),
+            qty=float(t.get("qty") or 0.0),
+            risk_usd=float(t.get("risk_usd") or 0.0),
+            pnl=_float_or_none(t.get("pnl")),
+            exit_reason=t.get("exit_reason"),
+            mode=t.get("mode"),
+            strategy=t.get("strategy"),
+            execution_mode=str(t.get("execution_mode") or "paper"),
+        ))
         await db.commit()
 
 
