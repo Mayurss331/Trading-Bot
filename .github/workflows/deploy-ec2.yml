@@ -62,8 +62,26 @@ jobs:
           set -euo pipefail
 
           cd "$APP_DIR"
+          BACKUP_DIR="$(mktemp -d)"
+          for db_file in tradingbot.db data/dashboard.sqlite3; do
+            if [ -f "$db_file" ]; then
+              mkdir -p "$BACKUP_DIR/$(dirname "$db_file")"
+              cp -p "$db_file" "$BACKUP_DIR/$db_file"
+            fi
+          done
+
           git fetch origin "$DEPLOY_BRANCH"
+          git reset --hard
+          git clean -fd -e .env -e .venv -e tradingbot.db -e data/dashboard.sqlite3
           git checkout -B "$DEPLOY_BRANCH" "origin/$DEPLOY_BRANCH"
+
+          for db_file in tradingbot.db data/dashboard.sqlite3; do
+            if [ -f "$BACKUP_DIR/$db_file" ]; then
+              mkdir -p "$(dirname "$db_file")"
+              cp -p "$BACKUP_DIR/$db_file" "$db_file"
+            fi
+          done
+          rm -rf "$BACKUP_DIR"
 
           python3 -m venv .venv
           .venv/bin/pip install --upgrade pip
