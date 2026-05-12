@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import os
 from datetime import datetime
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 
 from ..db.database import AsyncSessionLocal
@@ -156,3 +159,74 @@ async def report_pnl_series(exec_mode: str = "all") -> JSONResponse:
             })
 
     return JSONResponse({"ok": True, "exec_mode": exec_mode, "series": series})
+
+
+class SendEmailRequest(BaseModel):
+    to: str
+
+
+def _trade_dicts(trades) -> list[dict]:
+    return [_trade_row(t) for t in trades]
+
+
+async def dispatch_report(to_email: str) -> dict:
+    """Core report dispatch — shared by the API endpoint and the daily scheduler."""
+    now = datetime.utcnow()
+
+    async with AsyncSessionLocal() as db:
+        paper_result = await db.execute(
+            select(Trade).where(Trade.execution_mode == "paper").order_by(Trade.entry_ts.asc())
+        )
+        paper_trades_orm = paper_result.scalars().all()
+        real_result = await db.execute(
+            select(Trade).where(Trade.execution_mode == "real").order_by(Trade.entry_ts.asc())
+        )
+        real_trades_orm = real_result.scalars().all()
+
+    paper_dicts = _trade_dicts(paper_trades_orm)
+    real_dicts = _trade_dicts(real_trades_orm)
+
+    def _build_and_send():
+        from ..services.report_pdf import generate_pdf
+        from ..services.email_sender import send_report_email
+        p_pdf = generate_pdf(paper_dicts, "Paper Trade Report", now) if paper_dicts else None
+        r_pdf = generate_pdf(real_dicts, "Real Trade Report", now) if real_dicts else None
+        send_report_email(
+            to_email=to_email,
+            paper_pdf=p_pdf,
+            real_pdf=r_pdf,
+            paper_count=len(paper_dicts),
+            real_count=len(real_dicts),
+            generated_at=now,
+        )
+        return p_pdf, r_pdf
+
+    paper_pdf, real_pdf = await asyncio.to_thread(_build_and_send)
+
+    attachments = []
+    if paper_pdf:
+        attachments.append("paper_trades.pdf")
+    if real_pdf:
+        attachments.append("real_trades.pdf")
+
+    msg = f"Report sent to {to_email}."
+    if attachments:
+        msg += f" Attached: {', '.join(attachments)}."
+    else:
+        msg += " No trades recorded yet — summary sent in email body."
+
+    return {"ok": True, "message": msg, "paper_count": len(paper_dicts), "real_count": len(real_dicts)}
+
+
+@router.post("/api/reports/send-email")
+async def send_email_report(body: SendEmailRequest) -> JSONResponse:
+    to_email = body.to.strip()
+    if not to_email or "@" not in to_email:
+        return JSONResponse({"ok": False, "message": "Invalid email address."}, status_code=400)
+    try:
+        result = await dispatch_report(to_email)
+        return JSONResponse(result)
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=500)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "message": f"Failed: {exc}"}, status_code=500)

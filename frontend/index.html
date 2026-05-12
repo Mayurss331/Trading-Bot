@@ -27,6 +27,9 @@
     <button class="activity-icon" id="actExpertPicks" title="Expert Picks">
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
     </button>
+    <button class="activity-icon" id="actReports" title="Reports">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    </button>
   </nav>
 
   <!-- Volatility Scanner Side Panel -->
@@ -113,6 +116,73 @@
       <!-- Attribution -->
       <div class="expert-attribution">
         <small>Powered by <a href="https://mycryptosignal.com" target="_blank">MyCryptoSignal</a></small>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Reports Side Panel -->
+  <aside class="reports-sidebar" id="reportsSidebar" aria-label="Reports" hidden>
+    <div class="reports-sidebar-head">
+      <div>
+        <h2>Reports</h2>
+        <p>Trade history &amp; performance</p>
+      </div>
+      <button id="reportsSidebarClose" type="button" class="btn-ghost">✕</button>
+    </div>
+    <div class="reports-sidebar-body">
+      <!-- Filter -->
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <div class="reports-filter-group" id="reportsFilterGroup">
+          <button class="reports-filter-btn active" data-filter="all">All</button>
+          <button class="reports-filter-btn" data-filter="paper">Paper</button>
+          <button class="reports-filter-btn" data-filter="real">Real</button>
+        </div>
+        <button id="reportsRefreshBtn" type="button" class="btn-primary" style="font-size:12px;padding:5px 12px;">Load</button>
+      </div>
+
+      <!-- Overview stats -->
+      <div>
+        <div class="reports-section-title">Performance Summary</div>
+        <div class="reports-overview" id="reportsOverview" style="margin-top:8px;">
+          <div class="report-stat"><span class="report-stat-label">Total Trades</span><span class="report-stat-value" id="rStatTotal">—</span></div>
+          <div class="report-stat"><span class="report-stat-label">Win Rate</span><span class="report-stat-value" id="rStatWinRate">—</span></div>
+          <div class="report-stat"><span class="report-stat-label">Net PnL</span><span class="report-stat-value" id="rStatNetPnl">—</span></div>
+          <div class="report-stat"><span class="report-stat-label">Profit Factor</span><span class="report-stat-value" id="rStatPF">—</span></div>
+          <div class="report-stat"><span class="report-stat-label">Max Drawdown</span><span class="report-stat-value" id="rStatDD">—</span></div>
+          <div class="report-stat"><span class="report-stat-label">Avg Duration</span><span class="report-stat-value" id="rStatDur">—</span></div>
+        </div>
+      </div>
+
+      <!-- Send Report -->
+      <div>
+        <div class="reports-section-title">Email Report</div>
+        <div style="margin-top:6px;margin-bottom:6px;font-size:11px;color:var(--text-dim);">
+          Auto-sends daily at <strong style="color:var(--text);">8:00 PM IST</strong> to the address configured in <code style="font-size:10px;">.env → REPORT_EMAIL_TO</code>
+        </div>
+        <div class="reports-send-row" style="margin-top:4px;">
+          <input type="email" id="reportEmailInput" placeholder="Override: send now to…" />
+          <button id="btnSendReport" class="btn-send-report">Send Now</button>
+        </div>
+      </div>
+
+      <!-- Trade Log -->
+      <div>
+        <div class="reports-section-title">Trade Log</div>
+        <div class="reports-table-wrap" style="margin-top:8px;">
+          <table class="reports-table">
+            <thead>
+              <tr>
+                <th>#</th><th>Pair</th><th>Side</th><th>Mode</th>
+                <th>Entry</th><th>Exit</th>
+                <th>Entry Px</th><th>Exit Px</th>
+                <th>Qty</th><th>PnL</th><th>Reason</th>
+              </tr>
+            </thead>
+            <tbody id="reportsTableBody">
+              <tr><td colspan="11" class="empty-row">Click Load to fetch trade data.</td></tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   </aside>
@@ -563,6 +633,7 @@
 
   <script src="/app.js"></script>
 </div><!-- /page-content -->
+<div class="toast-msg" id="toastMsg"></div>
 </body>
 
 </html>

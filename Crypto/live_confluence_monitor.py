@@ -48,6 +48,14 @@ from zoneinfo import ZoneInfo
 
 IST = ZoneInfo("Asia/Kolkata")
 
+_pending_db_writes: list[dict] = []
+
+
+def drain_completed_trades() -> list[dict]:
+    global _pending_db_writes
+    out, _pending_db_writes = _pending_db_writes, []
+    return out
+
 PUBLIC_BASE = "https://public.coindcx.com"
 PRIVATE_BASE = "https://api.coindcx.com"
 
@@ -1718,7 +1726,7 @@ def _enter_trade(
     )
 
 
-def _exit_trade(state: TradeState, ts: pd.Timestamp, exit_px: float, reason: str, risk_dollars: float) -> str:
+def _exit_trade(state: TradeState, ts: pd.Timestamp, exit_px: float, reason: str, risk_dollars: float, cfg: "RuntimeConfig | None" = None) -> str:
     if state.side == 1:
         pnl = (exit_px - state.entry_px) * state.qty
     else:
@@ -1731,6 +1739,24 @@ def _exit_trade(state: TradeState, ts: pd.Timestamp, exit_px: float, reason: str
         f"Exit={exit_px:,.4f} Reason={reason} | PnL=${pnl:,.2f} ({r_mult:+.2f}R) | "
         f"Cumulative=${state.realized_pnl:,.2f}"
     )
+
+    _pending_db_writes.append({
+        "pair": cfg.pair if cfg else "",
+        "side": state.side,
+        "entry_ts": state.entry_ts,
+        "exit_ts": ts,
+        "entry_px": state.entry_px,
+        "exit_px": exit_px,
+        "stop_px": state.stop_px,
+        "target_px": state.target_px,
+        "qty": state.qty,
+        "risk_usd": risk_dollars,
+        "pnl": pnl,
+        "exit_reason": reason,
+        "mode": cfg.execution_mode if cfg else None,
+        "strategy": None,
+        "execution_mode": "real" if (cfg and cfg.place_orders) else "paper",
+    })
 
     _reset_open_trade_fields(state)
     return msg
@@ -1771,6 +1797,23 @@ def sync_margin_order_state(ts: pd.Timestamp, state: TradeState, cfg: RuntimeCon
             f"Status={status.upper()} OrderId={state.broker_order_id} Exit={exit_text} "
             f"BrokerPnL=${broker_pnl:,.2f} Cumulative=${state.realized_pnl:,.2f}"
         )
+        _pending_db_writes.append({
+            "pair": cfg.pair,
+            "side": state.side,
+            "entry_ts": state.entry_ts,
+            "exit_ts": ts,
+            "entry_px": state.entry_px,
+            "exit_px": avg_exit if avg_exit > 0 else None,
+            "stop_px": state.stop_px,
+            "target_px": state.target_px,
+            "qty": state.qty,
+            "risk_usd": cfg.risk_dollars,
+            "pnl": broker_pnl,
+            "exit_reason": status.upper(),
+            "mode": cfg.execution_mode,
+            "strategy": None,
+            "execution_mode": "real",
+        })
         _reset_open_trade_fields(state)
     return events
 
@@ -1804,6 +1847,23 @@ def sync_futures_position_state(ts: pd.Timestamp, state: TradeState, cfg: Runtim
                 f"[{_fmt_ts(ts)}] BROKER {_fmt_side(state.side)} CLOSED | "
                 f"PositionId={state.position_id or 'n/a'} Pair={cfg.pair}"
             )
+            _pending_db_writes.append({
+                "pair": cfg.pair,
+                "side": state.side,
+                "entry_ts": state.entry_ts,
+                "exit_ts": ts,
+                "entry_px": state.entry_px,
+                "exit_px": None,
+                "stop_px": state.stop_px,
+                "target_px": state.target_px,
+                "qty": state.qty,
+                "risk_usd": cfg.risk_dollars,
+                "pnl": None,
+                "exit_reason": "BROKER_CLOSE",
+                "mode": cfg.execution_mode,
+                "strategy": None,
+                "execution_mode": "real" if cfg.place_orders else "paper",
+            })
             _reset_open_trade_fields(state)
             state.position_id = position_id
         elif state.position_id and state.position_id == position_id:
@@ -2287,7 +2347,7 @@ def process_closed_bar(
             if not ok:
                 events.append(f"[{_fmt_ts(ts)}] EXIT LONG FAILED ({should_exit}) | {broker_msg}")
                 return events
-            events.append(_exit_trade(state, ts, exit_px, should_exit, cfg.risk_dollars))
+            events.append(_exit_trade(state, ts, exit_px, should_exit, cfg.risk_dollars, cfg))
             events.append(f"[{_fmt_ts(ts)}] {broker_msg}")
             return events
 
@@ -2340,7 +2400,7 @@ def process_closed_bar(
             if not ok:
                 events.append(f"[{_fmt_ts(ts)}] EXIT SHORT FAILED ({should_exit}) | {broker_msg}")
                 return events
-            events.append(_exit_trade(state, ts, exit_px, should_exit, cfg.risk_dollars))
+            events.append(_exit_trade(state, ts, exit_px, should_exit, cfg.risk_dollars, cfg))
             events.append(f"[{_fmt_ts(ts)}] {broker_msg}")
             return events
 

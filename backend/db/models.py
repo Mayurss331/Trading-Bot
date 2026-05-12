@@ -23,6 +23,9 @@ class Trade(Base):
     risk_usd = Column(Float, nullable=False)
     pnl = Column(Float, nullable=True)
     exit_reason = Column(String, nullable=True)  # STOP / TARGET / SIGNAL
+    mode = Column(String, nullable=True)           # spot / margin / futures
+    strategy = Column(String, nullable=True)
+    execution_mode = Column(String, nullable=False, default="paper")  # paper / real
 
 
 class Candle(Base):
