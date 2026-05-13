@@ -38,6 +38,7 @@ const state = {
   stopLine: null,
   fvgHighLine: null,
   fvgLowLine: null,
+  sweepMarkers: null,
   livePositions: [],
   expertPicksInterval: null,
   reportsFilter: 'all',
@@ -484,6 +485,7 @@ function initPriceChart() {
     state.stopLine = null;
     state.fvgHighLine = null;
     state.fvgLowLine = null;
+    state.sweepMarkers = null;
   }
   const container = el.priceChart;
   const chart = LightweightCharts.createChart(container, {
@@ -613,9 +615,28 @@ function updatePositionLines(stateData) {
 }
 
 // ─── Daily Sweep overlays ─────────────────────────────────────────────────────
+function _setSeriesMarkers(series, markers) {
+  // LWC v5: createSeriesMarkers primitive; v4 fallback: series.setMarkers
+  if (typeof LightweightCharts?.createSeriesMarkers === 'function') {
+    if (state.sweepMarkers) {
+      try { state.sweepMarkers.setData(markers); } catch {}
+    } else {
+      state.sweepMarkers = LightweightCharts.createSeriesMarkers(series, markers);
+    }
+  } else {
+    try { series.setMarkers(markers); } catch {}
+  }
+}
+
 function clearSweepOverlays() {
   if (!state.candleSeries) return;
-  try { state.candleSeries.setMarkers([]); } catch {}
+  if (state.sweepMarkers) {
+    try { state.sweepMarkers.setData([]); } catch {}
+    try { state.candleSeries.detachPrimitive?.(state.sweepMarkers); } catch {}
+    state.sweepMarkers = null;
+  } else {
+    try { state.candleSeries.setMarkers?.([]); } catch {}
+  }
   if (state.fvgHighLine) {
     try { state.candleSeries.removePriceLine(state.fvgHighLine); } catch {}
     state.fvgHighLine = null;
@@ -667,7 +688,7 @@ function updateSweepOverlays(bars, strategyId, indicators) {
     prevPhase = b.phase;
   }
   markers.sort((a, b) => a.time - b.time);
-  try { state.candleSeries.setMarkers(markers); } catch {}
+  _setSeriesMarkers(state.candleSeries, markers);
 
   // FVG band lines (current active FVG from indicators)
   const fvgLow  = indicators?.fvg_low;
