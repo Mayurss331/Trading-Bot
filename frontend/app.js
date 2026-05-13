@@ -3,9 +3,15 @@
 const EXECUTION_PREF_KEY = 'coindcx-dashboard.execution-mode';
 const DASHBOARD_PREF_KEY = 'coindcx-dashboard.preferences';
 const DEFAULT_TIMEFRAME = '15m';
+const DEFAULT_STRATEGY = 'confluence';
 
-function normalizeTimeframe() {
-  return DEFAULT_TIMEFRAME;
+function normalizeTimeframe(value) {
+  if (!value) return DEFAULT_TIMEFRAME;
+  return value;
+}
+
+function normalizeStrategy(value) {
+  return value || DEFAULT_STRATEGY;
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -258,6 +264,8 @@ function saveDashboardPreferences() {
     savedAt: new Date().toISOString(),
     pair: el.pair.value.trim(),
     market: el.market.value.trim(),
+    strategy: el.strategy?.value || DEFAULT_STRATEGY,
+    timeframe: el.timeframe?.value || DEFAULT_TIMEFRAME,
     strategy: el.strategy.value,
     mode: el.mode.value,
     risk: el.risk.value,
@@ -322,7 +330,7 @@ async function applyDashboardPreferences() {
 
   setValue(el.pair, prefs.pair);
   setValue(el.market, prefs.market);
-  setValue(el.strategy, prefs.strategy);
+  setValue(el.strategy, normalizeStrategy(prefs.strategy));
   setValue(el.mode, prefs.mode);
   setValue(el.risk, prefs.risk);
   setValue(el.lookback, prefs.lookback);
@@ -692,7 +700,7 @@ function drawRsiChart(bars) {
 async function loadSnapshot() {
   const pair   = el.pair.value.trim()   || 'B-ETH_USDT';
   const market = el.market.value.trim() || 'ETHUSDT';
-  const strategy = el.strategy.value || 'confluence';
+  const strategy = normalizeStrategy(el.strategy.value);
   const mode     = el.mode.value || 'futures';
   const risk     = parseFloat(el.risk.value) || 10;
   const lookback = parseInt(el.lookback.value) || 3;
@@ -1255,6 +1263,48 @@ async function loadReports() {
   await Promise.all([loadReportsOverview(), loadReportsTrades()]);
 }
 
+function applySelectOptions(selectEl, options, currentValue, fallbackValue) {
+  if (!selectEl) return;
+  const desired = currentValue || fallbackValue;
+  const html = options
+    .map(opt => `<option value="${opt.value}">${opt.label}</option>`)
+    .join('');
+  selectEl.innerHTML = html;
+  const values = new Set(options.map(opt => opt.value));
+  const nextValue = values.has(desired) ? desired : (values.has(fallbackValue) ? fallbackValue : options[0]?.value);
+  if (nextValue != null) selectEl.value = nextValue;
+}
+
+async function loadStrategies() {
+  try {
+    const res = await fetch('/api/strategies');
+    const data = await res.json();
+    if (!data.ok) return;
+    const strategies = (data.strategies || [])
+      .map(s => ({ value: s.id, label: s.name || s.id }));
+    if (!strategies.length) return;
+    const pref = readDashboardPreferences();
+    applySelectOptions(el.strategy, strategies, pref.strategy, DEFAULT_STRATEGY);
+  } catch (err) {
+    console.error('Failed to load strategies', err);
+  }
+}
+
+async function loadTimeframes() {
+  try {
+    const res = await fetch('/api/timeframes');
+    const data = await res.json();
+    if (!data.ok) return;
+    const timeframes = (data.timeframes || [])
+      .map(t => ({ value: t.id, label: t.label || t.id }));
+    if (!timeframes.length) return;
+    const pref = readDashboardPreferences();
+    applySelectOptions(el.timeframe, timeframes, pref.timeframe, DEFAULT_TIMEFRAME);
+  } catch (err) {
+    console.error('Failed to load timeframes', err);
+  }
+}
+
 async function sendReport() {
   const email = (el.reportEmailInput?.value || '').trim();
   if (!email || !email.includes('@')) {
@@ -1320,7 +1370,7 @@ function renderCoinPicker() {
 async function loadTracking() {
   const coins = [...state.selectedCoins].join(',');
   if (!coins) return;
-  const strategy = el.strategy.value || 'confluence';
+  const strategy = normalizeStrategy(el.strategy.value);
   const risk = parseFloat(el.risk.value) || 10;
   const timeframe = normalizeTimeframe(el.timeframe?.value);
   el.trackingMeta.textContent = `Tracking ${state.selectedCoins.size} coin(s)… (last update: ${new Date().toLocaleTimeString()})`;
@@ -1600,6 +1650,11 @@ function wireEvents() {
   el.strategy.addEventListener('change', () => {
     saveDashboardPreferences();
     togglePair2Fields();
+    loadSnapshot();
+    loadAccount();
+    if (state.trackingActive) {
+      loadTracking();
+    }
   });
   togglePair2Fields();
 }
@@ -1608,6 +1663,7 @@ function wireEvents() {
 async function init() {
   initPriceChart();
   loadExecutionPreference();
+  await Promise.all([loadStrategies(), loadTimeframes()]);
   await applyDashboardPreferences();
   await applyRuntimeConfig();
   wireEvents();

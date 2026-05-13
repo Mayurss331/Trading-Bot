@@ -63,8 +63,23 @@ TIMEFRAME = "15m"
 BAR_FREQ = "15min"
 BAR_MINUTES = 15
 SUPPORTED_TIMEFRAMES = {
+    "5m": 5,
     "15m": 15,
+    "1h": 60,
 }
+
+
+def list_timeframes() -> list[dict]:
+    ordered = sorted(SUPPORTED_TIMEFRAMES.items(), key=lambda item: item[1])
+    out: list[dict] = []
+    for tf, minutes in ordered:
+        label = tf
+        if tf.endswith("m"):
+            label = f"{minutes}m"
+        elif tf.endswith("h"):
+            label = f"{minutes // 60}h"
+        out.append({"id": tf, "label": label, "minutes": minutes})
+    return out
 MIN_WARMUP_BARS = 30
 
 LONG_ENTRY_SCORE = 3

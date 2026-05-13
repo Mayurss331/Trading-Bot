@@ -7,6 +7,7 @@ import pandas as pd
 from . import (
     arbitrage,
     confluence,
+    daily_sweep,
     funding_basis,
     mean_reversion,
     mixed_consensus,
@@ -23,6 +24,7 @@ StrategyFn = Callable[[pd.DataFrame, StrategyContext], dict]
 STRATEGIES: dict[str, StrategyFn] = {
     arbitrage.META.id: arbitrage.analyze,
     confluence.META.id: confluence.analyze,
+    daily_sweep.META.id: daily_sweep.analyze,
     funding_basis.META.id: funding_basis.analyze,
     mean_reversion.META.id: mean_reversion.analyze,
     mixed_consensus.META.id: mixed_consensus.analyze,
@@ -34,6 +36,7 @@ STRATEGIES: dict[str, StrategyFn] = {
 METAS = {
     arbitrage.META.id: arbitrage.META,
     confluence.META.id: confluence.META,
+    daily_sweep.META.id: daily_sweep.META,
     funding_basis.META.id: funding_basis.META,
     mean_reversion.META.id: mean_reversion.META,
     mixed_consensus.META.id: mixed_consensus.META,
