@@ -661,12 +661,11 @@ function updateSweepOverlays(bars, strategyId, indicators) {
   const dashed = LightweightCharts?.LineStyle?.Dashed ?? 2;
 
   const markers = [];
-  let prevPhase = null;
   for (const b of bars) {
     const t = Math.floor(new Date(b.time).getTime() / 1000);
-    // BOS — first bar of new accumulation phase
-    if (b.phase === 'accumulation' && prevPhase !== 'accumulation' && b.bias != null && b.bias !== 0) {
-      markers.push({ time: t, position: b.bias > 0 ? 'belowBar' : 'aboveBar',
+    // BOS — first bar of new 1H bias direction
+    if (b.bos != null && b.bos !== 0) {
+      markers.push({ time: t, position: b.bos > 0 ? 'belowBar' : 'aboveBar',
         color: COLORS.violet, shape: 'circle', text: 'BOS' });
     }
     // Sweep (manipulation entry)
@@ -685,7 +684,6 @@ function updateSweepOverlays(bars, strategyId, indicators) {
         color: b.entry_side > 0 ? COLORS.bull : COLORS.bear,
         shape: b.entry_side > 0 ? 'arrowUp' : 'arrowDown', text: 'FVG' });
     }
-    prevPhase = b.phase;
   }
   markers.sort((a, b) => a.time - b.time);
   _setSeriesMarkers(state.candleSeries, markers);

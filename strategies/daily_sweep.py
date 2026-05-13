@@ -98,6 +98,7 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
     frame["last_swing_low"] = frame["swing_low"].ffill()
 
     bias_change = (frame["bias"] != frame["bias"].shift()) & (frame["bias"] != 0)
+    frame["bos"] = frame["bias"].where(bias_change, 0).astype(int)
     frame["bias_group"] = bias_change.cumsum().where(frame["bias"] != 0)
     frame["bias_high"] = frame.groupby("bias_group")["High"].cummax()
     frame["bias_low"] = frame.groupby("bias_group")["Low"].cummin()
