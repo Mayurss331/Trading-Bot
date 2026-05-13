@@ -52,6 +52,8 @@ DEFAULT_FUTURES_COINS = [
 
 _CATALOG_CACHE: dict[str, object] = {"ts": 0.0, "coins": []}
 _CATALOG_TTL = 600
+MIN_SNAPSHOT_BARS = 60
+MAX_SNAPSHOT_BARS = 10_000
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +154,7 @@ def _sync_build_snapshot(
         cfg.pair,
         cfg.market,
         lookback_days=cfg.lookback_days,
+        limit=limit,
         execution_mode=cfg.execution_mode,
         timeframe=cfg.timeframe,
     )
@@ -182,6 +185,7 @@ def _sync_build_snapshot(
         try:
             p2_bars, _, _, _ = bot.fetch_closed_bars(
                 pair2, market2, lookback_days=cfg.lookback_days,
+                limit=limit,
                 execution_mode=cfg.execution_mode,
                 timeframe=cfg.timeframe,
             )
@@ -258,6 +262,12 @@ def _sync_build_snapshot(
 # Routes
 # ---------------------------------------------------------------------------
 
+def _snapshot_bar_limit(lookback_days: int, bar_minutes: int, requested_limit: int | None) -> int:
+    if requested_limit is None:
+        requested_limit = (lookback_days * 24 * 60) // max(1, bar_minutes) + 2
+    return max(MIN_SNAPSHOT_BARS, min(int(requested_limit), MAX_SNAPSHOT_BARS))
+
+
 @router.get("/api/health")
 async def health() -> JSONResponse:
     return JSONResponse({
@@ -276,7 +286,7 @@ async def snapshot(
     strategy: str = "confluence",
     mode: str = "futures",
     lookback_days: int = 3,
-    limit: int = 240,
+    limit: int | None = None,
     risk: float = 10.0,
     pair2: str = "",
     market2: str = "",
@@ -288,9 +298,9 @@ async def snapshot(
     strategy_id = normalize_strategy_id(strategy)
     mode = mode.lower() if mode.lower() in {"spot", "margin", "futures"} else "spot"
     lookback_days = max(1, min(lookback_days, 30))
-    limit = max(60, min(limit, 1000))
     risk = max(0.01, min(risk, 1_000_000.0))
-    tf, _, _ = bot._normalize_timeframe(timeframe or None)
+    tf, _, bar_minutes = bot._normalize_timeframe(timeframe or None)
+    limit = _snapshot_bar_limit(lookback_days, bar_minutes, limit)
     exec_mode = exec_mode.lower() if exec_mode.lower() in {"paper", "real"} else ""
 
     result = await asyncio.to_thread(
