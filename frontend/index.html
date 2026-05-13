@@ -5,30 +5,34 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>CoinDCX Bot Dashboard</title>
+  <meta name="theme-color" content="#0a0d12" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
-    rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css?v=20260514-ui-redesign" />
   <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 
 <body>
+  <a href="#mainWorkspace" class="sr-only" style="position:absolute;left:-9999px;top:4px;z-index:9999;padding:6px 12px;background:var(--neutral);color:#fff;border-radius:4px;font-size:.8rem;" onfocus="this.style.left='8px'" onblur="this.style.left='-9999px'">Skip to main content</a>
 
   <!-- VS Code-style Activity Bar -->
   <nav class="activity-bar" aria-label="Activity bar">
-    <button class="activity-icon" id="actDashboard" title="Dashboard" aria-pressed="true">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    <button class="activity-icon" id="actDashboard" aria-label="Dashboard" aria-pressed="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+      <span class="activity-tooltip" aria-hidden="true">Dashboard</span>
     </button>
-    <button class="activity-icon" id="actVolScanner" title="Volatility Scanner">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+    <button class="activity-icon" id="actVolScanner" aria-label="Volatility Scanner">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span class="activity-tooltip" aria-hidden="true">Vol Scanner</span>
     </button>
-    <button class="activity-icon" id="actExpertPicks" title="Expert Picks">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+    <button class="activity-icon" id="actExpertPicks" aria-label="Expert Picks">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      <span class="activity-tooltip" aria-hidden="true">Expert Picks</span>
     </button>
-    <button class="activity-icon" id="actReports" title="Reports">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+    <button class="activity-icon" id="actReports" aria-label="Reports">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      <span class="activity-tooltip" aria-hidden="true">Reports</span>
     </button>
   </nav>
 
@@ -40,8 +44,8 @@
         <p>Futures coins ≤ $10 · ATR% ranked <span id="volScanMeta"></span></p>
       </div>
       <div class="vol-head-actions">
-        <button id="volScanButton" type="button" class="btn-primary">Scan</button>
-        <button id="volSidebarClose" type="button" class="btn-ghost">✕</button>
+        <button id="volScanButton" type="button" class="btn-primary" data-loading="false">Scan</button>
+        <button id="volSidebarClose" type="button" class="btn-ghost" aria-label="Close Volatility Scanner">✕</button>
       </div>
     </div>
     <div class="vol-sidebar-body">
@@ -54,7 +58,14 @@
           </tr>
         </thead>
         <tbody id="volScanBody">
-          <tr><td colspan="8" class="empty-row">Click Scan to find high-volatility coins.</td></tr>
+          <tr>
+            <td colspan="8">
+              <div class="empty-state">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <span>Click Scan to find high-volatility coins</span>
+              </div>
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -65,20 +76,31 @@
     <div class="expert-sidebar-head">
       <div>
         <h2>Expert Picks</h2>
-        <p>Smart signals for your portfolio</p>
+        <p>Smart signals &amp; market sentiment</p>
       </div>
       <div class="expert-head-actions">
-        <button id="expertRefreshBtn" type="button" class="btn-primary">Refresh</button>
-        <button id="expertSidebarClose" type="button" class="btn-ghost">✕</button>
+        <button id="expertRefreshBtn" type="button" class="btn-primary" data-loading="false">Refresh</button>
+        <button id="expertSidebarClose" type="button" class="btn-ghost" aria-label="Close Expert Picks">✕</button>
       </div>
     </div>
     <div class="expert-sidebar-body">
+
       <!-- Sentiment Card -->
       <div class="expert-card">
         <div class="expert-card-label">Market Sentiment</div>
-        <div class="sentiment-display" id="sentimentDisplay">
+        <div class="sentiment-display">
           <span class="sentiment-value" id="sentimentValue">—</span>
-          <span class="sentiment-class" id="sentimentClass">Loading...</span>
+          <span class="sentiment-class" id="sentimentClass">Loading…</span>
+        </div>
+        <div class="sentiment-gauge">
+          <div class="gauge-bar">
+            <div class="gauge-fill" id="sentimentGaugeFill" style="left: 50%"></div>
+          </div>
+          <div class="gauge-labels">
+            <span>Extreme Fear</span>
+            <span>Neutral</span>
+            <span>Extreme Greed</span>
+          </div>
         </div>
         <small class="sentiment-time" id="sentimentTime"></small>
       </div>
@@ -92,7 +114,14 @@
               <tr><th>Coin</th><th>Pos</th><th>Signal</th><th>Action</th></tr>
             </thead>
             <tbody id="expertPosBody">
-              <tr><td colspan="4" class="empty-row">Loading positions...</td></tr>
+              <tr>
+                <td colspan="4">
+                  <div class="empty-state">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                    <span>Connect API keys to see positions</span>
+                  </div>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -107,7 +136,14 @@
               <tr><th>#</th><th>Coin</th><th>Signal</th><th>Conf%</th></tr>
             </thead>
             <tbody id="expertSignalsTable">
-              <tr><td colspan="4" class="empty-row">Loading signals...</td></tr>
+              <tr>
+                <td colspan="4">
+                  <div class="empty-state">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                    <span>Loading signals…</span>
+                  </div>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -115,7 +151,7 @@
 
       <!-- Attribution -->
       <div class="expert-attribution">
-        <small>Powered by <a href="https://mycryptosignal.com" target="_blank">MyCryptoSignal</a></small>
+        <small>Powered by <a href="https://mycryptosignal.com" target="_blank" rel="noopener">MyCryptoSignal</a> · Fear &amp; Greed via Alternative.me</small>
       </div>
     </div>
   </aside>
@@ -125,41 +161,83 @@
     <div class="reports-sidebar-head">
       <div>
         <h2>Reports</h2>
-        <p>Trade history &amp; performance</p>
+        <p>Trade history &amp; performance analytics</p>
       </div>
-      <button id="reportsSidebarClose" type="button" class="btn-ghost">✕</button>
+      <button id="reportsSidebarClose" type="button" class="btn-ghost" aria-label="Close Reports">✕</button>
     </div>
     <div class="reports-sidebar-body">
-      <!-- Filter -->
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+
+      <!-- Filter + Actions -->
+      <div class="reports-toolbar">
         <div class="reports-filter-group" id="reportsFilterGroup">
           <button class="reports-filter-btn active" data-filter="all">All</button>
           <button class="reports-filter-btn" data-filter="paper">Paper</button>
           <button class="reports-filter-btn" data-filter="real">Real</button>
         </div>
-        <button id="reportsRefreshBtn" type="button" class="btn-primary" style="font-size:12px;padding:5px 12px;">Load</button>
-      </div>
-
-      <!-- Overview stats -->
-      <div>
-        <div class="reports-section-title">Performance Summary</div>
-        <div class="reports-overview" id="reportsOverview" style="margin-top:8px;">
-          <div class="report-stat"><span class="report-stat-label">Total Trades</span><span class="report-stat-value" id="rStatTotal">—</span></div>
-          <div class="report-stat"><span class="report-stat-label">Win Rate</span><span class="report-stat-value" id="rStatWinRate">—</span></div>
-          <div class="report-stat"><span class="report-stat-label">Net PnL</span><span class="report-stat-value" id="rStatNetPnl">—</span></div>
-          <div class="report-stat"><span class="report-stat-label">Profit Factor</span><span class="report-stat-value" id="rStatPF">—</span></div>
-          <div class="report-stat"><span class="report-stat-label">Max Drawdown</span><span class="report-stat-value" id="rStatDD">—</span></div>
-          <div class="report-stat"><span class="report-stat-label">Avg Duration</span><span class="report-stat-value" id="rStatDur">—</span></div>
+        <div class="reports-toolbar-actions">
+          <button id="reportsRefreshBtn" type="button" class="btn-primary reports-load-btn" data-loading="false">Load</button>
+          <button id="reportsClearHistoryBtn" type="button" class="btn-danger-outline">Clear History</button>
         </div>
       </div>
 
-      <!-- Send Report -->
-      <div>
-        <div class="reports-section-title">Email Report</div>
-        <div style="margin-top:6px;margin-bottom:6px;font-size:11px;color:var(--text-dim);">
-          Auto-sends daily at <strong style="color:var(--text);">8:00 PM IST</strong> to the address configured in <code style="font-size:10px;">.env → REPORT_EMAIL_TO</code>
+      <!-- Clear Confirm -->
+      <div class="reports-clear-confirm" id="reportsClearConfirm" hidden>
+        <div class="reports-clear-copy">
+          <strong>Clear all history?</strong>
+          <span>Deletes stored trades, signals, candles, and snapshots. Dashboard settings are kept.</span>
         </div>
-        <div class="reports-send-row" style="margin-top:4px;">
+        <div class="reports-clear-actions">
+          <input id="reportsClearConfirmInput" autocomplete="off" spellcheck="false" placeholder="Type CLEAR HISTORY to confirm" />
+          <button id="reportsClearConfirmBtn" type="button" class="btn-danger-solid">Confirm</button>
+          <button id="reportsClearCancelBtn" type="button" class="btn-ghost">Cancel</button>
+        </div>
+      </div>
+      <div class="reports-status" id="reportsStatus" aria-live="polite"></div>
+
+      <!-- Performance Summary -->
+      <div>
+        <div class="reports-section-title">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Performance Summary
+        </div>
+        <div class="reports-overview" id="reportsOverview">
+          <div class="report-stat">
+            <span class="report-stat-label">Total Trades</span>
+            <span class="report-stat-value" id="rStatTotal">—</span>
+          </div>
+          <div class="report-stat">
+            <span class="report-stat-label">Win Rate</span>
+            <span class="report-stat-value" id="rStatWinRate">—</span>
+          </div>
+          <div class="report-stat">
+            <span class="report-stat-label">Net PnL</span>
+            <span class="report-stat-value" id="rStatNetPnl">—</span>
+          </div>
+          <div class="report-stat">
+            <span class="report-stat-label">Profit Factor</span>
+            <span class="report-stat-value" id="rStatPF">—</span>
+          </div>
+          <div class="report-stat">
+            <span class="report-stat-label">Max Drawdown</span>
+            <span class="report-stat-value" id="rStatDD">—</span>
+          </div>
+          <div class="report-stat">
+            <span class="report-stat-label">Avg Duration</span>
+            <span class="report-stat-value" id="rStatDur">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Email Report -->
+      <div>
+        <div class="reports-section-title">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+          Email Report
+        </div>
+        <div class="reports-note">
+          Auto-sends daily at <strong style="color:var(--text);">8:00 PM IST</strong> to address configured in <code style="font-size:.68rem;">.env → REPORT_EMAIL_TO</code>
+        </div>
+        <div class="reports-send-row">
           <input type="email" id="reportEmailInput" placeholder="Override: send now to…" />
           <button id="btnSendReport" class="btn-send-report">Send Now</button>
         </div>
@@ -167,28 +245,67 @@
 
       <!-- Trade Log -->
       <div>
-        <div class="reports-section-title">Trade Log</div>
-        <div class="reports-table-wrap" style="margin-top:8px;">
+        <div class="reports-section-title">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          Trade Log
+        </div>
+        <div class="reports-table-wrap">
           <table class="reports-table">
             <thead>
               <tr>
-                <th>#</th><th>Pair</th><th>Side</th><th>Mode</th>
+                <th>ID</th><th>Pair</th><th>Side</th><th>Market</th><th>Exec</th><th>Strategy</th>
                 <th>Entry</th><th>Exit</th>
                 <th>Entry Px</th><th>Exit Px</th>
-                <th>Qty</th><th>PnL</th><th>Reason</th>
+                <th>Stop</th><th>Target</th><th>Qty</th><th>Risk</th><th>PnL</th><th>Reason</th>
               </tr>
             </thead>
             <tbody id="reportsTableBody">
-              <tr><td colspan="11" class="empty-row">Click Load to fetch trade data.</td></tr>
+              <tr>
+                <td colspan="16">
+                  <div class="empty-state">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                    <span>Click Load to fetch trade data</span>
+                  </div>
+                </td>
+              </tr>
             </tbody>
           </table>
         </div>
       </div>
+
     </div>
   </aside>
 
   <!-- Page content wrapper -->
   <div class="page-content" id="pageContent">
+
+  <!-- Market Status Strip -->
+  <div class="market-status-strip" id="marketStatusStrip">
+    <div class="mss-item">
+      <span class="mss-label">Pair</span>
+      <span class="mss-value" id="mssCurrentPair">—</span>
+    </div>
+    <div class="mss-item">
+      <span class="mss-label">Bid</span>
+      <span class="mss-value" id="mssBid">—</span>
+    </div>
+    <div class="mss-item">
+      <span class="mss-label">Ask</span>
+      <span class="mss-value" id="mssAsk">—</span>
+    </div>
+    <div class="mss-item">
+      <span class="mss-label">Spread</span>
+      <span class="mss-value" id="mssSpread">—</span>
+    </div>
+    <div class="mss-item">
+      <span class="mss-label">Strategy</span>
+      <span class="mss-value" id="mssStrategy">—</span>
+    </div>
+    <div class="mss-item">
+      <span class="mss-label">Mode</span>
+      <span class="mss-value" id="mssMktMode">—</span>
+    </div>
+  </div>
 
   <!-- Header -->
   <header class="topbar">
@@ -199,11 +316,15 @@
         <span></span>
         <span></span>
       </button>
-      <h1>CoinDCX Bot</h1>
+      <h1>
+        <span class="brand-dot"></span>
+        CoinDCX Bot
+      </h1>
       <div class="ws-status" id="wsStatus" title="WebSocket connection">
         <span class="ws-dot" id="wsDot"></span>
         <span id="wsLabel">Connecting</span>
       </div>
+      <span class="topbar-time" id="topbarTime"></span>
     </div>
 
     <div class="topbar-controls">
@@ -259,19 +380,21 @@
         <option value="15m" selected>15m</option>
       </select>
     </label>
-    <label class="execution-toggle" title="Remember whether this dashboard is set to paper mode or real-order intent.">
-      <span class="ctrl-label-text">Execution</span>
-      <span class="switch-row">
-        <input id="realOrdersToggle" type="checkbox" />
-        <span class="switch-track" aria-hidden="true"></span>
-        <strong id="executionModeLabel">Paper only</strong>
-      </span>
-    </label>
+    <div class="execution-guard" id="executionGuard">
+      <label class="execution-toggle" title="Real orders require credentials and execution flags in .env">
+        <span class="ctrl-label-text">Execution</span>
+        <span class="switch-row">
+          <input id="realOrdersToggle" type="checkbox" />
+          <span class="switch-track" aria-hidden="true"></span>
+          <strong id="executionModeLabel">Paper only</strong>
+        </span>
+      </label>
+    </div>
     <label class="ctrl-label">
       <span>Lookback (days)</span>
       <input id="lookbackInput" type="number" min="1" max="30" value="3" />
     </label>
-    <button id="refreshButton" type="button" class="btn-primary">Refresh</button>
+    <button id="refreshButton" type="button" class="btn-primary" data-loading="false">Refresh</button>
 
     <!-- Tracked coins menu -->
     <div class="tracked-coins-menu" id="trackedCoinsMenu" style="display: none;">
@@ -287,17 +410,17 @@
     <article class="account-card account-card-main">
       <div class="account-card-head">
         <span class="metric-label">Wallet Balance</span>
-        <button id="refreshAccountButton" type="button" class="btn-ghost">Refresh</button>
+        <button id="refreshAccountButton" type="button" class="btn-ghost" data-loading="false">Refresh</button>
       </div>
       <strong class="account-value" id="walletBalance">—</strong>
-      <small class="metric-sub" id="walletStatus">Add API keys in .env</small>
+      <small class="metric-sub" id="walletStatus">Add API keys in .env to connect</small>
     </article>
     <article class="account-card">
       <span class="metric-label">Active Positions</span>
       <strong class="account-value" id="positionsCount">—</strong>
       <small class="metric-sub" id="positionsMeta">—</small>
     </article>
-    <article class="account-card">
+    <article class="account-card" id="pnlCard">
       <span class="metric-label">Unrealized PnL</span>
       <strong class="account-value" id="accountPnl">—</strong>
       <small class="metric-sub" id="accountModeText">Futures account</small>
@@ -319,6 +442,7 @@
       <span class="metric-label">Last Price</span>
       <strong class="metric-value" id="lastPrice">—</strong>
       <small class="metric-sub" id="changePct">—</small>
+      <div class="metric-trend" id="priceTrend"></div>
     </article>
     <article class="metric-card">
       <span class="metric-label">Signal</span>
@@ -338,7 +462,7 @@
   </section>
 
   <!-- Main workspace -->
-  <main class="workspace">
+  <main class="workspace" id="mainWorkspace">
 
     <!-- Left column: chart + score/rsi + tracker -->
     <div class="col-left">
@@ -349,9 +473,12 @@
             <h2 id="priceChartTitle">Price + Strategy Line</h2>
             <p id="priceChartSub">Candlestick with Supertrend overlay</p>
           </div>
-          <div class="chart-legend">
-            <span class="legend-item long">Long entry ▲</span>
-            <span class="legend-item short">Short entry ▼</span>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span class="live-badge" id="chartLiveBadge" style="display:none;">Live</span>
+            <div class="chart-legend">
+              <span class="legend-item long">Long entry</span>
+              <span class="legend-item short">Short entry</span>
+            </div>
           </div>
         </div>
         <div id="priceChart" class="lwc-container"></div>
@@ -361,7 +488,7 @@
         <section class="panel score-panel" aria-label="Strategy score">
           <div class="panel-head">
             <h2 id="scoreChartTitle">Score</h2>
-            <p id="scoreChartText">—5 to +5 confluence vote</p>
+            <p id="scoreChartText">−5 to +5 confluence vote</p>
           </div>
           <canvas id="scoreChart" height="140"></canvas>
         </section>
@@ -369,13 +496,13 @@
         <section class="panel rsi-panel" aria-label="RSI">
           <div class="panel-head">
             <h2>RSI</h2>
-            <p>Overbought above 70 · Oversold below 30</p>
+            <p>Overbought &gt; 70 · Oversold &lt; 30</p>
           </div>
           <canvas id="rsiChart" height="140"></canvas>
         </section>
       </div>
 
-      <!-- Futures Tracker - Collapsible Side Panel -->
+      <!-- Futures Tracker -->
       <div class="tracker-sidebar" id="trackerSidebar">
         <button class="tracker-collapse-btn" id="trackerCollapseBtn" title="Toggle tracker panel">
           <span class="collapse-icon">◀</span>
@@ -384,7 +511,7 @@
           <div class="panel-head tracker-head">
             <div>
               <h2>Futures Tracker</h2>
-              <p>Select coins and track strategy signals side-by-side.</p>
+              <p>Track strategy signals side-by-side.</p>
             </div>
             <div class="tracker-actions">
               <button id="startTrackingButton" type="button" class="btn-secondary">Track</button>
@@ -395,7 +522,7 @@
             <input id="coinSearchInput" placeholder="Search BTC, ETH, SOL…" autocomplete="off" />
             <div class="coin-picker" id="coinPicker"></div>
             <div class="add-coin-row">
-              <input id="customCoinInput" placeholder="e.g. NEAR" autocomplete="off" />
+              <input id="customCoinInput" placeholder="Add custom (e.g. NEAR)" autocomplete="off" />
               <button id="addCoinButton" type="button" class="btn-ghost">Add</button>
             </div>
           </div>
@@ -410,12 +537,18 @@
                   <th>Score</th>
                   <th>RSI</th>
                   <th>Position</th>
+                  <th>Str</th>
                   <th>Fresh</th>
                 </tr>
               </thead>
               <tbody id="trackingBody">
                 <tr>
-                  <td colspan="7" class="empty-row">Select coins and start tracking.</td>
+                  <td colspan="8">
+                    <div class="empty-state">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                      <span>Select coins above and click Track</span>
+                    </div>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -437,11 +570,12 @@
         <button id="drawerCloseButton" type="button" class="btn-ghost">Close</button>
       </div>
 
+      <!-- Appearance -->
       <section class="panel settings-panel" aria-label="Dashboard settings">
         <div class="panel-head">
           <div>
             <h2>Appearance</h2>
-            <p>Theme is remembered with your dashboard preferences.</p>
+            <p>Theme is remembered across sessions.</p>
           </div>
         </div>
         <label class="ctrl-label theme-field">
@@ -454,7 +588,7 @@
         </label>
       </section>
 
-      <!-- Intelligence panel -->
+      <!-- Smart Money Intelligence -->
       <section class="panel intelligence-panel" aria-label="Smart money intelligence">
         <div class="panel-head">
           <div>
@@ -484,13 +618,19 @@
             </thead>
             <tbody id="signalsBody">
               <tr>
-                <td colspan="6" class="empty-row">Loading…</td>
+                <td colspan="6">
+                  <div class="empty-state">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    <span>Loading smart money data…</span>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
+        <div class="intel-update-time" id="signalsUpdateTime"></div>
 
-        <div class="intel-sub-head" style="margin-top:12px">Smart Money Inflow Rank (24h)</div>
+        <div class="intel-sub-head" style="margin-top:14px">Smart Money Inflow Rank (24h)</div>
         <div class="table-wrap">
           <table class="data-table intel-table" id="rankTable">
             <thead>
@@ -504,14 +644,20 @@
             </thead>
             <tbody id="rankBody">
               <tr>
-                <td colspan="5" class="empty-row">Loading…</td>
+                <td colspan="5">
+                  <div class="empty-state">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+                    <span>Loading inflow rankings…</span>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
+        <div class="intel-update-time" id="rankUpdateTime"></div>
       </section>
 
-      <!-- Details: strategy + trade state + events -->
+      <!-- Strategy Details + Trade State + Events -->
       <section class="panel details-panel" aria-label="Strategy details">
         <div class="details-grid">
           <div class="detail-block">
@@ -533,7 +679,7 @@
       <section class="panel journal-panel" aria-label="Trade journal">
         <div class="panel-head">
           <h2>Trade Journal</h2>
-          <button id="refreshJournalButton" type="button" class="btn-ghost">Refresh</button>
+          <button id="refreshJournalButton" type="button" class="btn-ghost" data-loading="false">Refresh</button>
         </div>
         <div class="table-wrap">
           <table class="data-table journal-table">
@@ -550,7 +696,12 @@
             </thead>
             <tbody id="journalBody">
               <tr>
-                <td colspan="7" class="empty-row">No trades logged yet.</td>
+                <td colspan="7">
+                  <div class="empty-state">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                    <span>No trades logged yet</span>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -560,9 +711,13 @@
     </aside><!-- /side-drawer -->
   </main>
 
+  <!-- System Section Label -->
+  <div class="section-label">System Overview</div>
+
   <!-- Bottom section: Performance & Logs -->
   <section class="bottom-section" aria-label="Performance and execution logs">
     <div class="bottom-grid">
+
       <!-- Active Positions -->
       <section class="panel active-positions-panel" aria-label="Active positions on tracked coins">
         <div class="panel-head">
@@ -585,7 +740,12 @@
             </thead>
             <tbody id="positionsBody">
               <tr>
-                <td colspan="8" class="empty-row">No active positions on tracked coins.</td>
+                <td colspan="8">
+                  <div class="empty-state">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+                    <span>No active positions on tracked coins</span>
+                  </div>
+                </td>
               </tr>
             </tbody>
           </table>
@@ -602,18 +762,22 @@
           <div class="perf-stat">
             <span class="perf-label">Win Rate</span>
             <strong class="perf-value" id="winRate">—</strong>
+            <div class="progress-bar"><div class="progress-fill long" id="winRateBar" style="width:0%"></div></div>
           </div>
           <div class="perf-stat">
             <span class="perf-label">Total Trades</span>
             <strong class="perf-value" id="totalTrades">—</strong>
+            <div class="progress-bar"><div class="progress-fill" id="totalTradesBar" style="width:0%"></div></div>
           </div>
           <div class="perf-stat">
             <span class="perf-label">Profit Factor</span>
             <strong class="perf-value" id="profitFactor">—</strong>
+            <div class="progress-bar"><div class="progress-fill gold" id="pfBar" style="width:0%"></div></div>
           </div>
           <div class="perf-stat">
             <span class="perf-label">Max Drawdown</span>
             <strong class="perf-value" id="maxDrawdown">—</strong>
+            <div class="progress-bar"><div class="progress-fill short" id="ddBar" style="width:0%"></div></div>
           </div>
         </div>
       </section>
@@ -628,12 +792,57 @@
           <ol id="executionLog" class="log-list"></ol>
         </div>
       </section>
+
     </div>
   </section>
 
-  <script src="/app.js"></script>
+  <script src="/app.js?v=20260514-ui-redesign"></script>
+
+  <!-- Topbar clock + market strip live sync -->
+  <script>
+    (function() {
+      function padZ(n) { return String(n).padStart(2,'0'); }
+      function tick() {
+        const el = document.getElementById('topbarTime');
+        if (!el) return;
+        const d = new Date();
+        el.textContent = padZ(d.getHours()) + ':' + padZ(d.getMinutes()) + ':' + padZ(d.getSeconds());
+      }
+      tick();
+      setInterval(tick, 1000);
+
+      // Execution guard visual state
+      const toggle = document.getElementById('realOrdersToggle');
+      const guard  = document.getElementById('executionGuard');
+      if (toggle && guard) {
+        toggle.addEventListener('change', function() {
+          guard.classList.toggle('is-real', this.checked);
+        });
+      }
+
+      // Market status strip — sync from WS & controls
+      function updateStrip() {
+        const pair = document.getElementById('pairInput');
+        const mode = document.getElementById('modeInput');
+        const strat = document.getElementById('strategyInput');
+        const mssP = document.getElementById('mssCurrentPair');
+        const mssM = document.getElementById('mssMktMode');
+        const mssS = document.getElementById('mssStrategy');
+        if (pair && mssP) mssP.textContent = pair.value || '—';
+        if (mode && mssM) mssM.textContent = mode.value || '—';
+        if (strat && mssS) mssS.textContent = strat.options[strat.selectedIndex]?.text || '—';
+      }
+      updateStrip();
+      ['pairInput','modeInput','strategyInput'].forEach(function(id) {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener('change', updateStrip);
+      });
+    })();
+  </script>
+
 </div><!-- /page-content -->
-<div class="toast-msg" id="toastMsg"></div>
+
+<div class="toast-msg" id="toastMsg" role="status" aria-live="polite" aria-atomic="true"></div>
 </body>
 
 </html>

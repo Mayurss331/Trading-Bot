@@ -124,6 +124,12 @@ const el = {
   reportsSidebarClose: $('reportsSidebarClose'),
   reportsFilterGroup: $('reportsFilterGroup'),
   reportsRefreshBtn: $('reportsRefreshBtn'),
+  reportsClearHistoryBtn: $('reportsClearHistoryBtn'),
+  reportsClearConfirm: $('reportsClearConfirm'),
+  reportsClearConfirmInput: $('reportsClearConfirmInput'),
+  reportsClearConfirmBtn: $('reportsClearConfirmBtn'),
+  reportsClearCancelBtn: $('reportsClearCancelBtn'),
+  reportsStatus: $('reportsStatus'),
   reportsOverview: $('reportsOverview'),
   reportsTableBody: $('reportsTableBody'),
   rStatTotal:    $('rStatTotal'),
@@ -160,6 +166,23 @@ function fmtNum(v, dp = 2) {
   if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(2) + 'M';
   if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(2) + 'K';
   return n.toFixed(dp);
+}
+
+function escapeHtml(v) {
+  if (v == null) return '';
+  return String(v).replace(/[&<>"']/g, ch => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[ch]));
+}
+
+function fmtReportNum(v, maxDp = 8) {
+  if (v == null) return '—';
+  const n = parseFloat(v);
+  if (!Number.isFinite(n)) return '—';
+  if (n === 0) return '0';
+  const abs = Math.abs(n);
+  const dp = abs >= 100 ? 2 : abs >= 1 ? 4 : maxDp;
+  return n.toFixed(dp).replace(/\.?0+$/, '');
 }
 
 function fmtTs(iso) {
@@ -1196,7 +1219,13 @@ async function loadReportsOverview() {
     const res = await fetch(`/api/reports/overview?exec_mode=${exec}`);
     const d = await res.json();
     if (!d.ok) return;
-    if (el.rStatTotal) el.rStatTotal.textContent = d.total_trades ?? '—';
+    if (el.rStatTotal) {
+      const total = d.total_trades ?? 0;
+      const closed = d.closed_trades ?? total;
+      const open = d.open_trades ?? 0;
+      el.rStatTotal.textContent = open > 0 ? `${closed}/${total}` : total;
+      el.rStatTotal.title = open > 0 ? `${closed} closed, ${open} open` : `${total} closed trade(s)`;
+    }
     if (el.rStatWinRate) el.rStatWinRate.textContent = d.win_rate != null ? d.win_rate.toFixed(1) + '%' : '—';
     if (el.rStatNetPnl) {
       const v = d.net_pnl;
@@ -1214,12 +1243,12 @@ async function loadReportsOverview() {
 async function loadReportsTrades() {
   const exec = state.reportsFilter === 'all' ? '' : state.reportsFilter;
   try {
-    const res = await fetch(`/api/reports/trades?exec_mode=${exec}&limit=100`);
+    const res = await fetch(`/api/reports/trades?exec_mode=${exec}&limit=500`);
     const d = await res.json();
     if (!d.ok || !el.reportsTableBody) return;
     const trades = d.trades || [];
     if (trades.length === 0) {
-      el.reportsTableBody.innerHTML = '<tr><td colspan="11" class="empty-row">No trades recorded.</td></tr>';
+      el.reportsTableBody.innerHTML = '<tr><td colspan="16" class="empty-row">No trades recorded.</td></tr>';
       return;
     }
     el.reportsTableBody.innerHTML = trades.map((t, i) => {
@@ -1227,23 +1256,31 @@ async function loadReportsTrades() {
       const pnl = t.pnl != null
         ? `<span class="${t.pnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${t.pnl >= 0 ? '+' : ''}$${parseFloat(t.pnl).toFixed(2)}</span>`
         : '—';
-      const modeBadge = t.execution_mode
-        ? `<span class="mode-badge mode-${t.execution_mode}">${t.execution_mode}</span>`
+      const marketMode = t.mode
+        ? `<span class="mode-badge market-mode">${escapeHtml(t.mode)}</span>`
+        : '—';
+      const execMode = t.execution_mode
+        ? `<span class="mode-badge mode-${escapeHtml(t.execution_mode)}">${escapeHtml(t.execution_mode)}</span>`
         : '—';
       const fmtTs = v => v ? v.slice(0, 16).replace('T', ' ') : '—';
-      const fmtPx = v => v != null ? parseFloat(v).toFixed(4) : '—';
+      const strategy = t.strategy ? escapeHtml(t.strategy) : '—';
       return `<tr>
-        <td>${i + 1}</td>
-        <td><strong>${t.pair || '—'}</strong></td>
+        <td class="mono">${t.id ?? i + 1}</td>
+        <td><strong>${escapeHtml(t.pair || '—')}</strong></td>
         <td>${side}</td>
-        <td>${modeBadge}</td>
+        <td>${marketMode}</td>
+        <td>${execMode}</td>
+        <td>${strategy}</td>
         <td>${fmtTs(t.entry_ts)}</td>
         <td>${fmtTs(t.exit_ts)}</td>
-        <td>${fmtPx(t.entry_px)}</td>
-        <td>${fmtPx(t.exit_px)}</td>
-        <td>${t.qty != null ? parseFloat(t.qty).toFixed(4) : '—'}</td>
+        <td class="mono">${fmtReportNum(t.entry_px)}</td>
+        <td class="mono">${fmtReportNum(t.exit_px)}</td>
+        <td class="mono">${fmtReportNum(t.stop_px)}</td>
+        <td class="mono">${fmtReportNum(t.target_px)}</td>
+        <td class="mono">${fmtReportNum(t.qty)}</td>
+        <td class="mono">${t.risk_usd != null ? '$' + fmtReportNum(t.risk_usd, 4) : '—'}</td>
         <td>${pnl}</td>
-        <td>${t.exit_reason || '—'}</td>
+        <td>${escapeHtml(t.exit_reason || '—')}</td>
       </tr>`;
     }).join('');
   } catch (err) {
@@ -1253,6 +1290,69 @@ async function loadReportsTrades() {
 
 async function loadReports() {
   await Promise.all([loadReportsOverview(), loadReportsTrades()]);
+}
+
+function setReportsStatus(message, type = '') {
+  if (!el.reportsStatus) return;
+  el.reportsStatus.textContent = message || '';
+  el.reportsStatus.className = `reports-status ${type ? `reports-status-${type}` : ''}`;
+}
+
+function showClearHistoryConfirm() {
+  if (!el.reportsClearConfirm) {
+    showToast('Reload the page to enable clear history confirmation.', 'err');
+    return;
+  }
+  el.reportsClearConfirm.hidden = false;
+  setReportsStatus('Confirm below to clear all stored history.', 'warn');
+  el.reportsClearConfirmInput.value = '';
+  el.reportsClearConfirmInput.focus();
+}
+
+function hideClearHistoryConfirm() {
+  if (el.reportsClearConfirm) el.reportsClearConfirm.hidden = true;
+  if (el.reportsClearConfirmInput) el.reportsClearConfirmInput.value = '';
+  setReportsStatus('', '');
+}
+
+async function clearReportHistory(confirmText = '') {
+  const typed = confirmText || el.reportsClearConfirmInput?.value || '';
+  if (typed !== 'CLEAR HISTORY') {
+    setReportsStatus('Type CLEAR HISTORY exactly to enable deletion.', 'err');
+    return;
+  }
+
+  const btn = el.reportsClearConfirmBtn || el.reportsClearHistoryBtn;
+  if (btn) { btn.disabled = true; btn.textContent = 'Clearing...'; }
+  setReportsStatus('Clearing stored history...', 'warn');
+  try {
+    const res = await fetch('/api/reports/clear-history', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: typed }),
+    });
+    const d = await res.json();
+    if (!d.ok) {
+      setReportsStatus(d.message || 'Could not clear history.', 'err');
+      showToast(d.message || 'Could not clear history.', 'err');
+      return;
+    }
+    if (el.reportsTableBody) {
+      el.reportsTableBody.innerHTML = '<tr><td colspan="16" class="empty-row">No trades recorded.</td></tr>';
+    }
+    if (el.journalBody) {
+        el.journalBody.innerHTML = '<tr><td colspan="7" class="empty-row">No trades logged yet.</td></tr>';
+    }
+    hideClearHistoryConfirm();
+    setReportsStatus(d.message || 'History cleared.', 'ok');
+    showToast(d.message || 'History cleared.', 'ok');
+    await Promise.all([loadReports(), loadTradeJournal()]);
+  } catch (err) {
+    setReportsStatus('Network error — could not clear history.', 'err');
+    showToast('Network error — could not clear history.', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Confirm Clear'; }
+  }
 }
 
 async function sendReport() {
@@ -1440,6 +1540,13 @@ function switchTrackedCoin(coin) {
 
 // ─── Event wiring ─────────────────────────────────────────────────────────────
 function wireEvents() {
+  document.addEventListener('click', e => {
+    const target = e.target;
+    if (!(target instanceof Element)) return;
+    if (target.closest('#reportsClearHistoryBtn')) showClearHistoryConfirm();
+    if (target.closest('#reportsClearConfirmBtn')) clearReportHistory();
+    if (target.closest('#reportsClearCancelBtn')) hideClearHistoryConfirm();
+  });
   el.menuButton.addEventListener('click', () => setDrawerOpen(true));
   el.drawerClose.addEventListener('click', () => setDrawerOpen(false));
   el.drawerBackdrop.addEventListener('click', () => setDrawerOpen(false));
@@ -1507,6 +1614,14 @@ function wireEvents() {
   }
   if (el.reportsRefreshBtn) {
     el.reportsRefreshBtn.addEventListener('click', () => loadReports());
+  }
+  // Clear-history controls are handled by delegated clicks above so they still
+  // work if the reports panel is re-rendered later.
+  if (el.reportsClearConfirmInput) {
+    el.reportsClearConfirmInput.addEventListener('keydown', e => {
+      if (e.key === 'Enter') clearReportHistory();
+      if (e.key === 'Escape') hideClearHistoryConfirm();
+    });
   }
   if (el.reportsFilterGroup) {
     el.reportsFilterGroup.addEventListener('click', e => {
