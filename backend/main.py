@@ -101,6 +101,7 @@ async def lifespan(app: FastAPI):
             id="daily_report",
             max_instances=1,
             coalesce=True,
+            misfire_grace_time=3600,
         )
         logger.info("Daily report scheduled at 20:00 IST → %s", report_to)
     else:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import os
 from datetime import datetime
 
@@ -12,21 +13,25 @@ def send_report_email(
     real_count: int,
     generated_at: datetime,
 ) -> None:
-    """Send trade report email with PDF attachments via Resend.
+    """Send trade report email with PDF attachments via Brevo.
 
-    Raises RuntimeError if RESEND_API_KEY or REPORT_EMAIL_FROM are not set,
-    or if the Resend API call fails.
+    Raises RuntimeError if BREVO_API_KEY or REPORT_EMAIL_FROM are not set,
+    or if the Brevo API call fails.
     """
-    api_key = os.getenv("RESEND_API_KEY", "").strip()
+    api_key = os.getenv("BREVO_API_KEY", "").strip()
     from_email = os.getenv("REPORT_EMAIL_FROM", "").strip()
     if not api_key:
-        raise RuntimeError("RESEND_API_KEY environment variable is not set.")
+        raise RuntimeError("BREVO_API_KEY environment variable is not set.")
     if not from_email:
         raise RuntimeError("REPORT_EMAIL_FROM environment variable is not set.")
 
-    import resend
+    import brevo_python
+    from brevo_python import TransactionalEmailsApi, SendSmtpEmail, SendSmtpEmailAttachment
+    from brevo_python import ApiClient, Configuration
 
-    resend.api_key = api_key
+    config = Configuration()
+    config.api_key["api-key"] = api_key
+    api = TransactionalEmailsApi(ApiClient(config))
 
     date_str = generated_at.strftime("%Y-%m-%d")
     subject = f"CoinDCX Bot Trade Report — {date_str}"
@@ -49,26 +54,25 @@ def send_report_email(
 
     attachments = []
     if paper_pdf:
-        attachments.append({
-            "filename": f"paper_trades_{date_str}.pdf",
-            "content": list(paper_pdf),
-        })
+        attachments.append(SendSmtpEmailAttachment(
+            content=base64.b64encode(paper_pdf).decode(),
+            name=f"paper_trades_{date_str}.pdf",
+        ))
     if real_pdf:
-        attachments.append({
-            "filename": f"real_trades_{date_str}.pdf",
-            "content": list(real_pdf),
-        })
+        attachments.append(SendSmtpEmailAttachment(
+            content=base64.b64encode(real_pdf).decode(),
+            name=f"real_trades_{date_str}.pdf",
+        ))
 
-    params: dict = {
-        "from": from_email,
-        "to": [to_email],
-        "subject": subject,
-        "text": body,
-    }
-    if attachments:
-        params["attachments"] = attachments
+    email = SendSmtpEmail(
+        sender={"email": from_email},
+        to=[{"email": to_email}],
+        subject=subject,
+        text_content=body,
+        attachment=attachments if attachments else None,
+    )
 
-    response = resend.Emails.send(params)
+    response = api.send_transac_email(email)
 
-    if not response.get("id"):
-        raise RuntimeError(f"Resend returned unexpected response: {response}")
+    if not response.message_id:
+        raise RuntimeError(f"Brevo returned unexpected response: {response}")
