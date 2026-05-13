@@ -246,7 +246,11 @@ def _sync_build_snapshot(
         "action": analysis["action"],
         "state": analysis["state"],
         "events": analysis["events"],
-        "bars": bars_payload(bars, frame, limit),
+        "bars": bars_payload(
+            bars, frame, limit,
+            extra_cols=["phase", "fvg_low", "fvg_high", "entry_side", "bias", "sweep", "choch"]
+            if strategy_id == "daily_sweep" else None,
+        ),
     }
 
 

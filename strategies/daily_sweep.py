@@ -131,6 +131,9 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
     tp1_frac = np.full(n, np.nan)
     fvg_low_arr = np.full(n, np.nan)
     fvg_high_arr = np.full(n, np.nan)
+    phase_arr = np.full(n, "neutral", dtype=object)
+    sweep_arr = np.zeros(n, dtype=bool)
+    choch_arr = np.zeros(n, dtype=bool)
 
     pending_dir = 0
     sweep_idx = -1
@@ -155,6 +158,7 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
             pending_dir = 0
             fvg_dir = 0
             choch_idx = -1
+            phase_arr[i] = "neutral"
             continue
 
         if sweep_long.iloc[i]:
@@ -163,25 +167,32 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
             sweep_extreme = lows[i]
             choch_idx = -1
             fvg_dir = 0
+            sweep_arr[i] = True
         elif sweep_short.iloc[i]:
             pending_dir = SHORT
             sweep_idx = i
             sweep_extreme = highs[i]
             choch_idx = -1
             fvg_dir = 0
+            sweep_arr[i] = True
 
         if pending_dir == 0:
+            phase_arr[i] = "accumulation"
             continue
         if i - sweep_idx > CHOCH_WINDOW:
             pending_dir = 0
             fvg_dir = 0
             choch_idx = -1
+            phase_arr[i] = "accumulation"
             continue
 
+        prev_choch = choch_idx
         if pending_dir == LONG and np.isfinite(last_high[i]) and closes[i] > last_high[i]:
             choch_idx = i
         elif pending_dir == SHORT and np.isfinite(last_low[i]) and closes[i] < last_low[i]:
             choch_idx = i
+        if choch_idx != prev_choch and choch_idx == i:
+            choch_arr[i] = True
 
         if choch_idx >= 0:
             if pending_dir == LONG and highs[i - 2] < lows[i]:
@@ -202,6 +213,14 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
         if fvg_dir != 0:
             fvg_low_arr[i] = fvg_low
             fvg_high_arr[i] = fvg_high
+
+        # Phase assignment
+        if fvg_dir != 0:
+            phase_arr[i] = "distribution"
+        elif choch_idx >= 0:
+            phase_arr[i] = "distribution"
+        else:
+            phase_arr[i] = "manipulation"
 
         if fvg_dir != 0 and i > fvg_idx:
             touches_gap = lows[i] <= fvg_high and highs[i] >= fvg_low
@@ -243,6 +262,9 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
     frame["tp1_frac"] = tp1_frac
     frame["fvg_low"] = fvg_low_arr
     frame["fvg_high"] = fvg_high_arr
+    frame["phase"] = phase_arr
+    frame["sweep"] = sweep_arr
+    frame["choch"] = choch_arr
     frame["exit_long"] = frame["bias"] == SHORT
     frame["exit_short"] = frame["bias"] == LONG
     frame["st_line"] = np.nan
@@ -256,10 +278,24 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
             notes.append(f"Best with 5m bars; current median {minutes:.1f}m")
 
     latest = frame.iloc[-1]
-    bias_label = "NEUTRAL"
-    if latest.get("bias") == LONG:
-        bias_label = "LONG"
-    elif latest.get("bias") == SHORT:
-        bias_label = "SHORT"
+    bias_val = int(latest.get("bias", 0) or 0)
+    bias_label = "LONG" if bias_val == LONG else "SHORT" if bias_val == SHORT else "NEUTRAL"
     notes.append(f"1H bias: {bias_label}")
-    return finalize(META, frame, ctx, notes=notes)
+
+    def _finite(v):
+        try:
+            f = float(v)
+            return f if np.isfinite(f) else None
+        except (TypeError, ValueError):
+            return None
+
+    extra = {
+        "bias": bias_val,
+        "bias_label": bias_label,
+        "phase": str(latest.get("phase") or "neutral"),
+        "fvg_low": _finite(latest.get("fvg_low")),
+        "fvg_high": _finite(latest.get("fvg_high")),
+        "prev_day_high": _finite(latest.get("prev_day_high")),
+        "prev_day_low": _finite(latest.get("prev_day_low")),
+    }
+    return finalize(META, frame, ctx, notes=notes, extra_indicators=extra)

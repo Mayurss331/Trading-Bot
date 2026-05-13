@@ -339,7 +339,7 @@ def action_from_latest(frame: pd.DataFrame, state: PaperState, ctx: StrategyCont
     return {"type": "HOLD", "side": fmt_side(state.side), "label": "Position still valid", "score": score}
 
 
-def finalize(meta: StrategyMeta, frame: pd.DataFrame, ctx: StrategyContext, notes: list[str] | None = None) -> dict[str, Any]:
+def finalize(meta: StrategyMeta, frame: pd.DataFrame, ctx: StrategyContext, notes: list[str] | None = None, extra_indicators: dict | None = None) -> dict[str, Any]:
     frame = frame.dropna(subset=["Close"]).copy()
     state, events = replay_strategy(frame, ctx)
     action = action_from_latest(frame, state, ctx)
@@ -364,6 +364,7 @@ def finalize(meta: StrategyMeta, frame: pd.DataFrame, ctx: StrategyContext, note
             "tp1_px": latest.get("tp1_px"),
             "tp2_px": latest.get("tp2_px"),
             "stop_px": latest.get("stop_px"),
+            **(extra_indicators or {}),
         },
         "notes": notes or [],
     }

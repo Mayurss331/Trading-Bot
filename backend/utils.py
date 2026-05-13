@@ -157,13 +157,13 @@ def latest_action(score: float, state: object, allow_shorts: bool) -> dict:
     return {"type": "HOLD", "side": bot._fmt_side(state.side), "label": "Position still valid"}
 
 
-def bars_payload(bars: pd.DataFrame, frame: pd.DataFrame, limit: int) -> list[dict]:
+def bars_payload(bars: pd.DataFrame, frame: pd.DataFrame, limit: int, extra_cols: list[str] | None = None) -> list[dict]:
     limited = bars.tail(limit)
     frame_limited = frame.reindex(limited.index)
     rows: list[dict] = []
     for ts, row in limited.iterrows():
         ind = frame_limited.loc[ts] if ts in frame_limited.index else None
-        rows.append({
+        d: dict = {
             "time": ts,
             "open": row.get("Open"),
             "high": row.get("High"),
@@ -179,5 +179,19 @@ def bars_payload(bars: pd.DataFrame, frame: pd.DataFrame, limit: int) -> list[di
             "bb_lower": None if ind is None or pd.isna(ind.get("bb_lower")) else float(ind.get("bb_lower")),
             "bb_mid": None if ind is None or pd.isna(ind.get("bb_mid")) else float(ind.get("bb_mid")),
             "bb_upper": None if ind is None or pd.isna(ind.get("bb_upper")) else float(ind.get("bb_upper")),
-        })
+        }
+        if extra_cols and ind is not None:
+            for col in extra_cols:
+                val = ind.get(col)
+                if val is None:
+                    d[col] = None
+                elif isinstance(val, (bool, np.bool_)):
+                    d[col] = bool(val)
+                elif isinstance(val, np.integer):
+                    d[col] = int(val)
+                elif isinstance(val, (float, np.floating)):
+                    d[col] = None if not np.isfinite(float(val)) else float(val)
+                else:
+                    d[col] = val
+        rows.append(d)
     return rows

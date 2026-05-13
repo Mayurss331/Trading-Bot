@@ -36,6 +36,8 @@ const state = {
   theme: 'dark',
   targetLine: null,
   stopLine: null,
+  fvgHighLine: null,
+  fvgLowLine: null,
   livePositions: [],
   expertPicksInterval: null,
   reportsFilter: 'all',
@@ -480,6 +482,8 @@ function initPriceChart() {
     state.superSeries = null;
     state.targetLine = null;
     state.stopLine = null;
+    state.fvgHighLine = null;
+    state.fvgLowLine = null;
   }
   const container = el.priceChart;
   const chart = LightweightCharts.createChart(container, {
@@ -604,6 +608,80 @@ function updatePositionLines(stateData) {
   } else {
     try {
       state.targetLine.applyOptions({ price: parseFloat(targetPx), color: targetColor, title: 'Target ' + targetPx });
+    } catch {}
+  }
+}
+
+// ─── Daily Sweep overlays ─────────────────────────────────────────────────────
+function clearSweepOverlays() {
+  if (!state.candleSeries) return;
+  try { state.candleSeries.setMarkers([]); } catch {}
+  if (state.fvgHighLine) {
+    try { state.candleSeries.removePriceLine(state.fvgHighLine); } catch {}
+    state.fvgHighLine = null;
+  }
+  if (state.fvgLowLine) {
+    try { state.candleSeries.removePriceLine(state.fvgLowLine); } catch {}
+    state.fvgLowLine = null;
+  }
+}
+
+function updateSweepOverlays(bars, strategyId, indicators) {
+  clearSweepOverlays();
+  if (strategyId !== 'daily_sweep' || !state.candleSeries) return;
+
+  const COLORS = {
+    bull:   cssVar('--bull')   || '#00c896',
+    bear:   cssVar('--bear')   || '#f03858',
+    amber:  cssVar('--amber')  || '#f5a020',
+    blue:   cssVar('--blue')   || '#3a7ef4',
+    violet: cssVar('--violet') || '#7c5cf6',
+  };
+  const dashed = LightweightCharts?.LineStyle?.Dashed ?? 2;
+
+  const markers = [];
+  let prevPhase = null;
+  for (const b of bars) {
+    const t = Math.floor(new Date(b.time).getTime() / 1000);
+    // BOS — first bar of new accumulation phase
+    if (b.phase === 'accumulation' && prevPhase !== 'accumulation' && b.bias != null && b.bias !== 0) {
+      markers.push({ time: t, position: b.bias > 0 ? 'belowBar' : 'aboveBar',
+        color: COLORS.violet, shape: 'circle', text: 'BOS' });
+    }
+    // Sweep (manipulation entry)
+    if (b.sweep) {
+      markers.push({ time: t, position: b.bias > 0 ? 'belowBar' : 'aboveBar',
+        color: COLORS.amber, shape: b.bias > 0 ? 'arrowUp' : 'arrowDown', text: 'SWEEP' });
+    }
+    // CHoCH
+    if (b.choch) {
+      markers.push({ time: t, position: b.bias > 0 ? 'belowBar' : 'aboveBar',
+        color: COLORS.blue, shape: 'square', text: 'CHoCH' });
+    }
+    // FVG entry
+    if (b.entry_side && b.entry_side !== 0) {
+      markers.push({ time: t, position: b.entry_side > 0 ? 'belowBar' : 'aboveBar',
+        color: b.entry_side > 0 ? COLORS.bull : COLORS.bear,
+        shape: b.entry_side > 0 ? 'arrowUp' : 'arrowDown', text: 'FVG' });
+    }
+    prevPhase = b.phase;
+  }
+  markers.sort((a, b) => a.time - b.time);
+  try { state.candleSeries.setMarkers(markers); } catch {}
+
+  // FVG band lines (current active FVG from indicators)
+  const fvgLow  = indicators?.fvg_low;
+  const fvgHigh = indicators?.fvg_high;
+  if (fvgLow != null && fvgHigh != null && Number.isFinite(+fvgLow) && Number.isFinite(+fvgHigh)) {
+    try {
+      state.fvgHighLine = state.candleSeries.createPriceLine({
+        price: +fvgHigh, color: COLORS.violet, lineWidth: 1,
+        lineStyle: dashed, axisLabelVisible: true, title: 'FVG Hi',
+      });
+      state.fvgLowLine = state.candleSeries.createPriceLine({
+        price: +fvgLow, color: COLORS.violet, lineWidth: 1,
+        lineStyle: dashed, axisLabelVisible: true, title: 'FVG Lo',
+      });
     } catch {}
   }
 }
@@ -789,17 +867,32 @@ async function loadSnapshot() {
   const bars = data.bars || [];
   updatePriceChart(bars);
   updatePositionLines(stateData);
+  updateSweepOverlays(bars, data.strategy?.id, data.indicators);
   drawScoreChart(bars);
   drawRsiChart(bars);
 
   // Strategy details
   const strat = data.strategy || {};
-  el.strategyList.innerHTML = [
+  const ind   = data.indicators || {};
+  const isSweep = data.strategy?.id === 'daily_sweep';
+
+  const stratRows = [
     ['Name', strat.name],
     ['Description', strat.description],
     ['Reason', strat.reason],
     ...(strat.notes || []).map((n, i) => [`Note ${i + 1}`, n]),
-  ].map(([k, v]) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '').join('');
+  ];
+  if (isSweep) {
+    const phaseLabel = { neutral: 'Neutral', accumulation: 'Accumulation', manipulation: 'Manipulation', distribution: 'Distribution' };
+    stratRows.push(['1H Bias', ind.bias_label || '—']);
+    stratRows.push(['Phase', phaseLabel[ind.phase] || ind.phase || '—']);
+    if (ind.fvg_low != null && ind.fvg_high != null)
+      stratRows.push(['FVG Band', `${fmtPrice(ind.fvg_low)} – ${fmtPrice(ind.fvg_high)}`]);
+    if (ind.prev_day_high != null) stratRows.push(['Prev Day High', fmtPrice(ind.prev_day_high)]);
+    if (ind.prev_day_low  != null) stratRows.push(['Prev Day Low',  fmtPrice(ind.prev_day_low)]);
+  }
+  el.strategyList.innerHTML = stratRows
+    .map(([k, v]) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '').join('');
 
   // Trade state
   const stateItems = [
