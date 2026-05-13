@@ -852,9 +852,21 @@ async function loadSnapshot() {
   el.signalText.className = 'metric-value ' + (action.side === 'LONG' ? 'long' : action.side === 'SHORT' ? 'short' : '');
   el.signalMeta.textContent = `${action.type || '—'} · ${action.side || '—'}`;
 
-  el.scoreText.textContent = score != null ? `${score > 0 ? '+' : ''}${score} / ${rsi?.toFixed(1) || '—'}` : '—';
-  el.scoreText.className = 'metric-value ' + (score >= 3 ? 'long' : score <= -3 ? 'short' : '');
-  el.rsiText.textContent = rsi != null ? `RSI ${rsi.toFixed(1)}` : '—';
+  const scoreLabelEl = document.getElementById('scoreLabelText');
+  if (data.strategy?.id === 'daily_sweep') {
+    const indNow = data.indicators || {};
+    const biasLbl = indNow.bias_label || 'NEUTRAL';
+    const phaseLbl = { neutral: 'Neutral', accumulation: 'Accumulation', manipulation: 'Manipulation', distribution: 'Distribution' }[indNow.phase] || indNow.phase || '—';
+    if (scoreLabelEl) scoreLabelEl.textContent = 'Bias / Phase';
+    el.scoreText.textContent = biasLbl;
+    el.scoreText.className = 'metric-value ' + (biasLbl === 'LONG' ? 'long' : biasLbl === 'SHORT' ? 'short' : '');
+    el.rsiText.textContent = phaseLbl;
+  } else {
+    if (scoreLabelEl) scoreLabelEl.textContent = 'Score / RSI';
+    el.scoreText.textContent = score != null ? `${score > 0 ? '+' : ''}${score} / ${rsi?.toFixed(1) || '—'}` : '—';
+    el.scoreText.className = 'metric-value ' + (score >= 3 ? 'long' : score <= -3 ? 'short' : '');
+    el.rsiText.textContent = rsi != null ? `RSI ${rsi.toFixed(1)}` : '—';
+  }
 
   const side = stateData.side;
   el.positionText.textContent = side || 'FLAT';
