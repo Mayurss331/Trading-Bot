@@ -41,6 +41,10 @@ class PaperState:
     target_px: float = np.nan
     qty: float = np.nan
     realized_pnl: float = 0.0
+    qty_open: float = np.nan
+    tp1_px: float = np.nan
+    tp2_px: float = np.nan
+    tp1_frac: float = np.nan
 
 
 def ema(s: pd.Series, n: int) -> pd.Series:
@@ -167,6 +171,10 @@ def state_payload(state: PaperState) -> dict[str, Any]:
         "stop_px": state.stop_px,
         "target_px": state.target_px,
         "qty": state.qty,
+        "qty_open": state.qty_open,
+        "tp1_px": state.tp1_px,
+        "tp2_px": state.tp2_px,
+        "tp1_frac": state.tp1_frac,
         "realized_pnl": state.realized_pnl,
         "broker_order_status": None,
         "exit_pending": False,
@@ -176,7 +184,22 @@ def state_payload(state: PaperState) -> dict[str, Any]:
 
 def enter_trade(state: PaperState, side: int, ts: pd.Timestamp, row: pd.Series, ctx: StrategyContext) -> str:
     entry = float(row["Close"])
-    stop, target, risk = derive_brackets(side, entry, float(row.get("st_line", np.nan)), float(row.get("atr", np.nan)))
+    stop_hint = row.get("stop_px", np.nan)
+    tp1_hint = row.get("tp1_px", np.nan)
+    tp2_hint = row.get("tp2_px", np.nan)
+    tp1_frac = row.get("tp1_frac", np.nan)
+    use_custom = np.isfinite(stop_hint) and (np.isfinite(tp1_hint) or np.isfinite(tp2_hint))
+    if use_custom:
+        stop = float(stop_hint)
+        if np.isfinite(tp1_hint) and np.isfinite(tp2_hint):
+            target = float(tp2_hint)
+        elif np.isfinite(tp2_hint):
+            target = float(tp2_hint)
+        else:
+            target = float(tp1_hint)
+        risk = risk_per_unit(entry, stop)
+    else:
+        stop, target, risk = derive_brackets(side, entry, float(row.get("st_line", np.nan)), float(row.get("atr", np.nan)))
     qty = ctx.risk / risk if risk > 0 else 0.0
     state.side = side
     state.trade_id += 1
@@ -185,6 +208,10 @@ def enter_trade(state: PaperState, side: int, ts: pd.Timestamp, row: pd.Series, 
     state.stop_px = stop
     state.target_px = target
     state.qty = qty
+    state.qty_open = qty
+    state.tp1_px = float(tp1_hint) if np.isfinite(tp1_hint) else np.nan
+    state.tp2_px = float(tp2_hint) if np.isfinite(tp2_hint) else np.nan
+    state.tp1_frac = float(tp1_frac) if np.isfinite(tp1_frac) else np.nan
     notional = qty * entry
     return (
         f"[{fmt_ts(ts)}] ENTRY {fmt_side(side)} | Trade #{state.trade_id} | "
@@ -194,10 +221,11 @@ def enter_trade(state: PaperState, side: int, ts: pd.Timestamp, row: pd.Series, 
 
 
 def exit_trade(state: PaperState, ts: pd.Timestamp, exit_px: float, reason: str, ctx: StrategyContext) -> str:
+    qty_exit = state.qty_open if np.isfinite(state.qty_open) else state.qty
     if state.side == LONG:
-        pnl = (exit_px - state.entry_px) * state.qty
+        pnl = (exit_px - state.entry_px) * qty_exit
     else:
-        pnl = (state.entry_px - exit_px) * state.qty
+        pnl = (state.entry_px - exit_px) * qty_exit
     state.realized_pnl += pnl
     r_mult = pnl / ctx.risk if ctx.risk > 0 else np.nan
     msg = (
@@ -239,6 +267,21 @@ def replay_strategy(frame: pd.DataFrame, ctx: StrategyContext, max_rows: int = 3
                     events.append(f"[{fmt_ts(ts)}] TRAIL LONG SL -> {state.stop_px:,.4f}")
             if low <= state.stop_px:
                 events.append(exit_trade(state, ts, state.stop_px, "STOP", ctx))
+            elif np.isfinite(state.tp1_px) and np.isfinite(state.tp1_frac) and state.tp1_frac > 0 and high >= state.tp1_px:
+                qty_exit = (state.qty_open if np.isfinite(state.qty_open) else state.qty) * float(state.tp1_frac)
+                qty_exit = min(qty_exit, state.qty_open if np.isfinite(state.qty_open) else state.qty)
+                if qty_exit > 0:
+                    prev_open = state.qty_open if np.isfinite(state.qty_open) else state.qty
+                    state.qty_open = max((state.qty_open if np.isfinite(state.qty_open) else state.qty) - qty_exit, 0.0)
+                    pnl = (state.tp1_px - state.entry_px) * qty_exit
+                    state.realized_pnl += pnl
+                    r_mult = pnl / ctx.risk if ctx.risk > 0 else np.nan
+                    events.append(
+                        f"[{fmt_ts(ts)}] EXIT LONG (TP1) | Trade #{state.trade_id} | "
+                        f"Exit={state.tp1_px:,.4f} Qty={qty_exit:,.8f}/{prev_open:,.8f} | "
+                        f"PnL=${pnl:,.2f} ({r_mult:+.2f}R) | Cumulative=${state.realized_pnl:,.2f}"
+                    )
+                    state.tp1_px = np.nan
             elif high >= state.target_px:
                 events.append(exit_trade(state, ts, state.target_px, "TARGET", ctx))
             elif bool(row.get("exit_long", False)):
@@ -252,6 +295,21 @@ def replay_strategy(frame: pd.DataFrame, ctx: StrategyContext, max_rows: int = 3
                     events.append(f"[{fmt_ts(ts)}] TRAIL SHORT SL -> {state.stop_px:,.4f}")
             if high >= state.stop_px:
                 events.append(exit_trade(state, ts, state.stop_px, "STOP", ctx))
+            elif np.isfinite(state.tp1_px) and np.isfinite(state.tp1_frac) and state.tp1_frac > 0 and low <= state.tp1_px:
+                qty_exit = (state.qty_open if np.isfinite(state.qty_open) else state.qty) * float(state.tp1_frac)
+                qty_exit = min(qty_exit, state.qty_open if np.isfinite(state.qty_open) else state.qty)
+                if qty_exit > 0:
+                    prev_open = state.qty_open if np.isfinite(state.qty_open) else state.qty
+                    state.qty_open = max((state.qty_open if np.isfinite(state.qty_open) else state.qty) - qty_exit, 0.0)
+                    pnl = (state.entry_px - state.tp1_px) * qty_exit
+                    state.realized_pnl += pnl
+                    r_mult = pnl / ctx.risk if ctx.risk > 0 else np.nan
+                    events.append(
+                        f"[{fmt_ts(ts)}] EXIT SHORT (TP1) | Trade #{state.trade_id} | "
+                        f"Exit={state.tp1_px:,.4f} Qty={qty_exit:,.8f}/{prev_open:,.8f} | "
+                        f"PnL=${pnl:,.2f} ({r_mult:+.2f}R) | Cumulative=${state.realized_pnl:,.2f}"
+                    )
+                    state.tp1_px = np.nan
             elif low <= state.target_px:
                 events.append(exit_trade(state, ts, state.target_px, "TARGET", ctx))
             elif bool(row.get("exit_short", False)):
@@ -303,6 +361,9 @@ def finalize(meta: StrategyMeta, frame: pd.DataFrame, ctx: StrategyContext, note
             "bb_lower": latest.get("bb_lower"),
             "bb_mid": latest.get("bb_mid"),
             "bb_upper": latest.get("bb_upper"),
+            "tp1_px": latest.get("tp1_px"),
+            "tp2_px": latest.get("tp2_px"),
+            "stop_px": latest.get("stop_px"),
         },
         "notes": notes or [],
     }

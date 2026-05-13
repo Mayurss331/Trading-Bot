@@ -308,6 +308,11 @@ async def strategies() -> JSONResponse:
     return JSONResponse({"ok": True, "strategies": list_strategies()})
 
 
+@router.get("/api/timeframes")
+async def timeframes() -> JSONResponse:
+    return JSONResponse({"ok": True, "timeframes": bot.list_timeframes()})
+
+
 @router.get("/api/futures-markets")
 async def futures_markets(force: bool = False) -> JSONResponse:
     coins = await asyncio.to_thread(_sync_fetch_catalog, force)
