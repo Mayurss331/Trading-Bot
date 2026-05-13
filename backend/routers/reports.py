@@ -169,7 +169,11 @@ def _trade_dicts(trades) -> list[dict]:
     return [_trade_row(t) for t in trades]
 
 
-async def dispatch_report(to_email: str) -> dict:
+def _parse_emails(raw: str) -> list[str]:
+    return [addr.strip() for addr in raw.split(",") if addr.strip() and "@" in addr.strip()]
+
+
+async def dispatch_report(to_emails: list[str]) -> dict:
     """Core report dispatch — shared by the API endpoint and the daily scheduler."""
     now = datetime.utcnow()
 
@@ -192,7 +196,7 @@ async def dispatch_report(to_email: str) -> dict:
         p_pdf = generate_pdf(paper_dicts, "Paper Trade Report", now) if paper_dicts else None
         r_pdf = generate_pdf(real_dicts, "Real Trade Report", now) if real_dicts else None
         send_report_email(
-            to_email=to_email,
+            to_emails=to_emails,
             paper_pdf=p_pdf,
             real_pdf=r_pdf,
             paper_count=len(paper_dicts),
@@ -209,7 +213,8 @@ async def dispatch_report(to_email: str) -> dict:
     if real_pdf:
         attachments.append("real_trades.pdf")
 
-    msg = f"Report sent to {to_email}."
+    recipients = ", ".join(to_emails)
+    msg = f"Report sent to {recipients}."
     if attachments:
         msg += f" Attached: {', '.join(attachments)}."
     else:
@@ -220,11 +225,11 @@ async def dispatch_report(to_email: str) -> dict:
 
 @router.post("/api/reports/send-email")
 async def send_email_report(body: SendEmailRequest) -> JSONResponse:
-    to_email = body.to.strip()
-    if not to_email or "@" not in to_email:
-        return JSONResponse({"ok": False, "message": "Invalid email address."}, status_code=400)
+    to_emails = _parse_emails(body.to)
+    if not to_emails:
+        return JSONResponse({"ok": False, "message": "No valid email address provided."}, status_code=400)
     try:
-        result = await dispatch_report(to_email)
+        result = await dispatch_report(to_emails)
         return JSONResponse(result)
     except RuntimeError as exc:
         return JSONResponse({"ok": False, "message": str(exc)}, status_code=500)

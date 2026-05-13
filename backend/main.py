@@ -71,7 +71,7 @@ from backend.routers.settings import router as settings_router  # noqa: E402
 from backend.routers.history import router as history_router  # noqa: E402
 from backend.routers.volatility_scanner import router as volatility_scanner_router  # noqa: E402
 from backend.routers.expert_picks import router as expert_picks_router  # noqa: E402
-from backend.routers.reports import router as reports_router, dispatch_report  # noqa: E402
+from backend.routers.reports import router as reports_router, dispatch_report, _parse_emails  # noqa: E402
 
 scheduler = AsyncIOScheduler()
 
@@ -85,11 +85,11 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(aggregate_candles, "interval", minutes=5, id="candle_store",
                       max_instances=1, coalesce=True)
 
-    report_to = os.getenv("REPORT_EMAIL_TO", "").strip()
-    if report_to:
+    report_recipients = _parse_emails(os.getenv("REPORT_EMAIL_TO", ""))
+    if report_recipients:
         async def _daily_report():
             try:
-                result = await dispatch_report(report_to)
+                result = await dispatch_report(report_recipients)
                 logger.info("Daily report: %s", result.get("message"))
             except Exception as exc:
                 logger.error("Daily report failed: %s", exc)
@@ -103,7 +103,7 @@ async def lifespan(app: FastAPI):
             coalesce=True,
             misfire_grace_time=3600,
         )
-        logger.info("Daily report scheduled at 20:00 IST → %s", report_to)
+        logger.info("Daily report scheduled at 20:00 IST → %s", ", ".join(report_recipients))
     else:
         logger.warning("REPORT_EMAIL_TO not set — daily report scheduler disabled.")
     if _env_bool("BACKGROUND_TRACKER_ENABLED", True):
