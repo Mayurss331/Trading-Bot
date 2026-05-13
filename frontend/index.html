@@ -1,841 +1,807 @@
 <!doctype html>
 <html lang="en">
-
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CoinDCX Bot Dashboard</title>
-  <meta name="theme-color" content="#0a0d12" />
+  <title>CoinDCX Pro — Trading Terminal</title>
+  <meta name="theme-color" content="#07090f" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=20260514-ui-redesign" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Orbitron:wght@600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css?v=20260514" />
   <script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 </head>
-
 <body>
-  <a href="#mainWorkspace" class="sr-only" style="position:absolute;left:-9999px;top:4px;z-index:9999;padding:6px 12px;background:var(--neutral);color:#fff;border-radius:4px;font-size:.8rem;" onfocus="this.style.left='8px'" onblur="this.style.left='-9999px'">Skip to main content</a>
 
-  <!-- VS Code-style Activity Bar -->
-  <nav class="activity-bar" aria-label="Activity bar">
-    <button class="activity-icon" id="actDashboard" aria-label="Dashboard" aria-pressed="true">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-      <span class="activity-tooltip" aria-hidden="true">Dashboard</span>
+  <a href="#mainWorkspace" style="position:absolute;left:-9999px;top:4px;z-index:9999;padding:6px 14px;background:var(--blue);color:#fff;border-radius:var(--r-sm);font-size:.78rem;font-family:var(--font-ui);" onfocus="this.style.left='8px'" onblur="this.style.left='-9999px'">Skip to main content</a>
+
+  <!-- ── Activity Bar ──────────────────────────────────────────────────────── -->
+  <nav class="activity-bar" aria-label="Activity navigation">
+    <div class="activity-bar-brand" aria-hidden="true">
+      <div class="activity-brand-dot"></div>
+    </div>
+
+    <button class="activity-icon active" id="actDashboard" aria-label="Dashboard" aria-pressed="true">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+      <span class="act-tip" aria-hidden="true">Dashboard</span>
     </button>
+
     <button class="activity-icon" id="actVolScanner" aria-label="Volatility Scanner">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      <span class="activity-tooltip" aria-hidden="true">Vol Scanner</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      <span class="act-tip" aria-hidden="true">Vol Scanner</span>
     </button>
+
     <button class="activity-icon" id="actExpertPicks" aria-label="Expert Picks">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-      <span class="activity-tooltip" aria-hidden="true">Expert Picks</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+      <span class="act-tip" aria-hidden="true">Expert Picks</span>
     </button>
+
     <button class="activity-icon" id="actReports" aria-label="Reports">
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-      <span class="activity-tooltip" aria-hidden="true">Reports</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      <span class="act-tip" aria-hidden="true">Reports</span>
     </button>
   </nav>
 
-  <!-- Volatility Scanner Side Panel -->
-  <aside class="vol-sidebar" id="volSidebar" aria-label="Volatility scanner" hidden>
-    <div class="vol-sidebar-head">
-      <div>
+  <!-- ── Volatility Scanner Sidebar ──────────────────────────────────────── -->
+  <aside class="sidebar-panel vol-sidebar" id="volSidebar" aria-label="Volatility Scanner" hidden>
+    <div class="sidebar-hd">
+      <div class="sidebar-hd-left">
         <h2>Volatility Scanner</h2>
-        <p>Futures coins ≤ $10 · ATR% ranked <span id="volScanMeta"></span></p>
+        <p>Futures coins &le; $10 &middot; ATR% ranked <span id="volScanMeta"></span></p>
       </div>
-      <div class="vol-head-actions">
+      <div class="sidebar-hd-right">
         <button id="volScanButton" type="button" class="btn-primary" data-loading="false">Scan</button>
-        <button id="volSidebarClose" type="button" class="btn-ghost" aria-label="Close Volatility Scanner">✕</button>
+        <button id="volSidebarClose" type="button" class="btn-ghost" aria-label="Close Volatility Scanner">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
     </div>
-    <div class="vol-sidebar-body">
-      <table class="data-table vol-table">
-        <thead>
-          <tr>
-            <th>#</th><th>Coin</th><th>Price</th>
-            <th>ATR%</th><th>Range%</th><th>StdDev%</th>
-            <th>Vol</th><th>Chg%</th>
-          </tr>
-        </thead>
-        <tbody id="volScanBody">
-          <tr>
-            <td colspan="8">
+    <div class="sidebar-body">
+      <div class="table-wrap">
+        <table class="data-table vol-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Coin</th><th>Price</th>
+              <th>ATR%</th><th>Range%</th><th>StdDev%</th>
+              <th>Vol</th><th>Chg%</th>
+            </tr>
+          </thead>
+          <tbody id="volScanBody">
+            <tr><td colspan="8" class="empty-state-cell">
               <div class="empty-state">
-                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
                 <span>Click Scan to find high-volatility coins</span>
               </div>
-            </td>
-          </tr>
-        </tbody>
-      </table>
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </aside>
 
-  <!-- Expert Picks Side Panel -->
-  <aside class="expert-sidebar" id="expertSidebar" aria-label="Expert Picks" hidden>
-    <div class="expert-sidebar-head">
-      <div>
+  <!-- ── Expert Picks Sidebar ─────────────────────────────────────────────── -->
+  <aside class="sidebar-panel expert-sidebar" id="expertSidebar" aria-label="Expert Picks" hidden>
+    <div class="sidebar-hd">
+      <div class="sidebar-hd-left">
         <h2>Expert Picks</h2>
         <p>Smart signals &amp; market sentiment</p>
       </div>
-      <div class="expert-head-actions">
+      <div class="sidebar-hd-right">
         <button id="expertRefreshBtn" type="button" class="btn-primary" data-loading="false">Refresh</button>
-        <button id="expertSidebarClose" type="button" class="btn-ghost" aria-label="Close Expert Picks">✕</button>
+        <button id="expertSidebarClose" type="button" class="btn-ghost" aria-label="Close Expert Picks">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
     </div>
-    <div class="expert-sidebar-body">
+    <div class="sidebar-body">
+      <div class="expert-body">
 
-      <!-- Sentiment Card -->
-      <div class="expert-card">
-        <div class="expert-card-label">Market Sentiment</div>
-        <div class="sentiment-display">
-          <span class="sentiment-value" id="sentimentValue">—</span>
-          <span class="sentiment-class" id="sentimentClass">Loading…</span>
-        </div>
-        <div class="sentiment-gauge">
-          <div class="gauge-bar">
-            <div class="gauge-fill" id="sentimentGaugeFill" style="left: 50%"></div>
+        <div class="expert-card">
+          <div class="expert-card-hd">Market Sentiment</div>
+          <div class="sentiment-row">
+            <span class="sentiment-num" id="sentimentValue">—</span>
+            <span class="sentiment-tag" id="sentimentClass">Loading&hellip;</span>
           </div>
-          <div class="gauge-labels">
-            <span>Extreme Fear</span>
-            <span>Neutral</span>
-            <span>Extreme Greed</span>
+          <div class="gauge-wrap">
+            <div class="gauge-track">
+              <div class="gauge-thumb" id="sentimentGaugeFill" style="left:50%"></div>
+            </div>
+            <div class="gauge-labels">
+              <span>Extreme Fear</span>
+              <span>Neutral</span>
+              <span>Extreme Greed</span>
+            </div>
           </div>
+          <span class="sent-time" id="sentimentTime"></span>
         </div>
-        <small class="sentiment-time" id="sentimentTime"></small>
-      </div>
 
-      <!-- Active Positions Recommendations -->
-      <div class="expert-card">
-        <div class="expert-card-label">Your Positions</div>
-        <div id="expertPositionsBody">
-          <table class="data-table expert-table">
-            <thead>
-              <tr><th>Coin</th><th>Pos</th><th>Signal</th><th>Action</th></tr>
-            </thead>
-            <tbody id="expertPosBody">
-              <tr>
-                <td colspan="4">
+        <div class="expert-card">
+          <div class="expert-card-hd">Your Positions</div>
+          <div class="table-wrap">
+            <table class="data-table expert-table">
+              <thead><tr><th>Coin</th><th>Pos</th><th>Signal</th><th>Action</th></tr></thead>
+              <tbody id="expertPosBody">
+                <tr><td colspan="4" class="empty-state-cell">
                   <div class="empty-state">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
                     <span>Connect API keys to see positions</span>
                   </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                </td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
-      <!-- Top Signals -->
-      <div class="expert-card">
-        <div class="expert-card-label">Top Signals</div>
-        <div id="expertSignalsBody">
-          <table class="data-table expert-table">
-            <thead>
-              <tr><th>#</th><th>Coin</th><th>Signal</th><th>Conf%</th></tr>
-            </thead>
-            <tbody id="expertSignalsTable">
-              <tr>
-                <td colspan="4">
+        <div class="expert-card">
+          <div class="expert-card-hd">Top Signals</div>
+          <div class="table-wrap">
+            <table class="data-table expert-table">
+              <thead><tr><th>#</th><th>Coin</th><th>Signal</th><th>Conf%</th></tr></thead>
+              <tbody id="expertSignalsTable">
+                <tr><td colspan="4" class="empty-state-cell">
                   <div class="empty-state">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                    <span>Loading signals…</span>
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                    <span>Loading signals&hellip;</span>
                   </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
+                </td></tr>
+              </tbody>
+            </table>
+          </div>
         </div>
-      </div>
 
-      <!-- Attribution -->
-      <div class="expert-attribution">
-        <small>Powered by <a href="https://mycryptosignal.com" target="_blank" rel="noopener">MyCryptoSignal</a> · Fear &amp; Greed via Alternative.me</small>
+      </div>
+      <div class="expert-attr">
+        <small>Powered by <a href="https://mycryptosignal.com" target="_blank" rel="noopener">MyCryptoSignal</a> &middot; Fear &amp; Greed via Alternative.me</small>
       </div>
     </div>
   </aside>
 
-  <!-- Reports Side Panel -->
-  <aside class="reports-sidebar" id="reportsSidebar" aria-label="Reports" hidden>
-    <div class="reports-sidebar-head">
-      <div>
+  <!-- ── Reports Sidebar ──────────────────────────────────────────────────── -->
+  <aside class="sidebar-panel reports-sidebar" id="reportsSidebar" aria-label="Reports" hidden>
+    <div class="sidebar-hd">
+      <div class="sidebar-hd-left">
         <h2>Reports</h2>
         <p>Trade history &amp; performance analytics</p>
       </div>
-      <button id="reportsSidebarClose" type="button" class="btn-ghost" aria-label="Close Reports">✕</button>
+      <div class="sidebar-hd-right">
+        <button id="reportsSidebarClose" type="button" class="btn-ghost" aria-label="Close Reports">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
     </div>
-    <div class="reports-sidebar-body">
+    <div class="sidebar-body">
+      <div class="reports-body">
 
-      <!-- Filter + Actions -->
-      <div class="reports-toolbar">
-        <div class="reports-filter-group" id="reportsFilterGroup">
-          <button class="reports-filter-btn active" data-filter="all">All</button>
-          <button class="reports-filter-btn" data-filter="paper">Paper</button>
-          <button class="reports-filter-btn" data-filter="real">Real</button>
-        </div>
-        <div class="reports-toolbar-actions">
-          <button id="reportsRefreshBtn" type="button" class="btn-primary reports-load-btn" data-loading="false">Load</button>
-          <button id="reportsClearHistoryBtn" type="button" class="btn-danger-outline">Clear History</button>
-        </div>
-      </div>
-
-      <!-- Clear Confirm -->
-      <div class="reports-clear-confirm" id="reportsClearConfirm" hidden>
-        <div class="reports-clear-copy">
-          <strong>Clear all history?</strong>
-          <span>Deletes stored trades, signals, candles, and snapshots. Dashboard settings are kept.</span>
-        </div>
-        <div class="reports-clear-actions">
-          <input id="reportsClearConfirmInput" autocomplete="off" spellcheck="false" placeholder="Type CLEAR HISTORY to confirm" />
-          <button id="reportsClearConfirmBtn" type="button" class="btn-danger-solid">Confirm</button>
-          <button id="reportsClearCancelBtn" type="button" class="btn-ghost">Cancel</button>
-        </div>
-      </div>
-      <div class="reports-status" id="reportsStatus" aria-live="polite"></div>
-
-      <!-- Performance Summary -->
-      <div>
-        <div class="reports-section-title">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-          Performance Summary
-        </div>
-        <div class="reports-overview" id="reportsOverview">
-          <div class="report-stat">
-            <span class="report-stat-label">Total Trades</span>
-            <span class="report-stat-value" id="rStatTotal">—</span>
+        <div class="reports-toolbar">
+          <div class="seg-ctrl" id="reportsFilterGroup">
+            <button class="seg-btn reports-filter-btn active" data-filter="all">All</button>
+            <button class="seg-btn reports-filter-btn" data-filter="paper">Paper</button>
+            <button class="seg-btn reports-filter-btn" data-filter="real">Real</button>
           </div>
-          <div class="report-stat">
-            <span class="report-stat-label">Win Rate</span>
-            <span class="report-stat-value" id="rStatWinRate">—</span>
-          </div>
-          <div class="report-stat">
-            <span class="report-stat-label">Net PnL</span>
-            <span class="report-stat-value" id="rStatNetPnl">—</span>
-          </div>
-          <div class="report-stat">
-            <span class="report-stat-label">Profit Factor</span>
-            <span class="report-stat-value" id="rStatPF">—</span>
-          </div>
-          <div class="report-stat">
-            <span class="report-stat-label">Max Drawdown</span>
-            <span class="report-stat-value" id="rStatDD">—</span>
-          </div>
-          <div class="report-stat">
-            <span class="report-stat-label">Avg Duration</span>
-            <span class="report-stat-value" id="rStatDur">—</span>
+          <div class="toolbar-actions">
+            <button id="reportsRefreshBtn" type="button" class="btn-primary" data-loading="false">Load</button>
+            <button id="reportsClearHistoryBtn" type="button" class="btn-danger-outline">Clear History</button>
           </div>
         </div>
-      </div>
 
-      <!-- Email Report -->
-      <div>
-        <div class="reports-section-title">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
-          Email Report
-        </div>
-        <div class="reports-note">
-          Auto-sends daily at <strong style="color:var(--text);">8:00 PM IST</strong> to address configured in <code style="font-size:.68rem;">.env → REPORT_EMAIL_TO</code>
-        </div>
-        <div class="reports-send-row">
-          <input type="email" id="reportEmailInput" placeholder="Override: send now to…" />
-          <button id="btnSendReport" class="btn-send-report">Send Now</button>
-        </div>
-      </div>
-
-      <!-- Trade Log -->
-      <div>
-        <div class="reports-section-title">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-          Trade Log
-        </div>
-        <div class="reports-table-wrap">
-          <table class="reports-table">
-            <thead>
-              <tr>
-                <th>ID</th><th>Pair</th><th>Side</th><th>Market</th><th>Exec</th><th>Strategy</th>
-                <th>Entry</th><th>Exit</th>
-                <th>Entry Px</th><th>Exit Px</th>
-                <th>Stop</th><th>Target</th><th>Qty</th><th>Risk</th><th>PnL</th><th>Reason</th>
-              </tr>
-            </thead>
-            <tbody id="reportsTableBody">
-              <tr>
-                <td colspan="16">
-                  <div class="empty-state">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-                    <span>Click Load to fetch trade data</span>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-    </div>
-  </aside>
-
-  <!-- Page content wrapper -->
-  <div class="page-content" id="pageContent">
-
-  <!-- Market Status Strip -->
-  <div class="market-status-strip" id="marketStatusStrip">
-    <div class="mss-item">
-      <span class="mss-label">Pair</span>
-      <span class="mss-value" id="mssCurrentPair">—</span>
-    </div>
-    <div class="mss-item">
-      <span class="mss-label">Bid</span>
-      <span class="mss-value" id="mssBid">—</span>
-    </div>
-    <div class="mss-item">
-      <span class="mss-label">Ask</span>
-      <span class="mss-value" id="mssAsk">—</span>
-    </div>
-    <div class="mss-item">
-      <span class="mss-label">Spread</span>
-      <span class="mss-value" id="mssSpread">—</span>
-    </div>
-    <div class="mss-item">
-      <span class="mss-label">Strategy</span>
-      <span class="mss-value" id="mssStrategy">—</span>
-    </div>
-    <div class="mss-item">
-      <span class="mss-label">Mode</span>
-      <span class="mss-value" id="mssMktMode">—</span>
-    </div>
-  </div>
-
-  <!-- Header -->
-  <header class="topbar">
-    <div class="topbar-brand">
-      <button id="menuButton" type="button" class="icon-button menu-button" aria-label="Open menu"
-        aria-controls="sideDrawer" aria-expanded="false">
-        <span></span>
-        <span></span>
-        <span></span>
-      </button>
-      <h1>
-        <span class="brand-dot"></span>
-        CoinDCX Bot
-      </h1>
-      <div class="ws-status" id="wsStatus" title="WebSocket connection">
-        <span class="ws-dot" id="wsDot"></span>
-        <span id="wsLabel">Connecting</span>
-      </div>
-      <span class="topbar-time" id="topbarTime"></span>
-    </div>
-
-    <div class="topbar-controls">
-      <label class="ctrl-label">
-        <span>Pair</span>
-        <input id="pairInput" value="B-ETH_USDT" autocomplete="off" />
-      </label>
-      <label class="ctrl-label">
-        <span>Market</span>
-        <input id="marketInput" value="ETHUSDT" autocomplete="off" />
-      </label>
-      <label class="ctrl-label">
-        <span>Risk $</span>
-        <input id="riskInput" type="number" min="0.01" step="1" value="10" />
-      </label>
-      <label class="ctrl-label pair2-field">
-        <span>Pair 2</span>
-        <input id="pair2Input" placeholder="e.g. B-BTC_USDT" autocomplete="off" />
-      </label>
-      <label class="ctrl-label pair2-field">
-        <span>Market 2</span>
-        <input id="market2Input" placeholder="e.g. BTCUSDT" autocomplete="off" />
-      </label>
-    </div>
-  </header>
-
-  <!-- Controls bar -->
-  <nav class="controls-bar" aria-label="Strategy controls">
-    <label class="ctrl-label">
-      <span>Strategy</span>
-      <select id="strategyInput">
-        <option value="" disabled selected>Loading…</option>
-      </select>
-    </label>
-    <label class="ctrl-label">
-      <span>Mode</span>
-      <select id="modeInput">
-        <option value="spot">Spot</option>
-        <option value="margin">Margin</option>
-        <option value="futures" selected>Futures</option>
-      </select>
-    </label>
-    <label class="ctrl-label">
-      <span>Timeframe</span>
-      <select id="timeframeInput">
-        <option value="" disabled selected>Loading…</option>
-      </select>
-    </label>
-    <div class="execution-guard" id="executionGuard">
-      <label class="execution-toggle" title="Real orders require credentials and execution flags in .env">
-        <span class="ctrl-label-text">Execution</span>
-        <span class="switch-row">
-          <input id="realOrdersToggle" type="checkbox" />
-          <span class="switch-track" aria-hidden="true"></span>
-          <strong id="executionModeLabel">Paper only</strong>
-        </span>
-      </label>
-    </div>
-    <label class="ctrl-label">
-      <span>Lookback (days)</span>
-      <input id="lookbackInput" type="number" min="1" max="30" value="3" />
-    </label>
-    <button id="refreshButton" type="button" class="btn-primary" data-loading="false">Refresh</button>
-
-    <!-- Tracked coins menu -->
-    <div class="tracked-coins-menu" id="trackedCoinsMenu" style="display: none;">
-      <span class="menu-label">Tracking:</span>
-      <div class="coins-menu-items" id="coinsMenuItems"></div>
-    </div>
-
-    <span class="feed-text" id="feedText">Feed: —</span>
-  </nav>
-
-  <!-- Account overview -->
-  <section class="account-overview" aria-label="Wallet balance and position summary">
-    <article class="account-card account-card-main">
-      <div class="account-card-head">
-        <span class="metric-label">Wallet Balance</span>
-        <button id="refreshAccountButton" type="button" class="btn-ghost" data-loading="false">Refresh</button>
-      </div>
-      <strong class="account-value" id="walletBalance">—</strong>
-      <small class="metric-sub" id="walletStatus">Add API keys in .env to connect</small>
-    </article>
-    <article class="account-card">
-      <span class="metric-label">Active Positions</span>
-      <strong class="account-value" id="positionsCount">—</strong>
-      <small class="metric-sub" id="positionsMeta">—</small>
-    </article>
-    <article class="account-card" id="pnlCard">
-      <span class="metric-label">Unrealized PnL</span>
-      <strong class="account-value" id="accountPnl">—</strong>
-      <small class="metric-sub" id="accountModeText">Futures account</small>
-    </article>
-    <article class="account-card risk-card">
-      <span class="metric-label">Risk / Sizing</span>
-      <strong class="account-value" id="currentRiskText">—</strong>
-      <div class="risk-buttons" id="riskButtons"></div>
-      <div class="custom-risk-row">
-        <input id="customRiskInput" type="number" min="0.0001" step="0.01" placeholder="Custom $" />
-        <button id="applyCustomRiskButton" type="button" class="btn-ghost">Apply</button>
-      </div>
-    </article>
-  </section>
-
-  <!-- Metrics strip -->
-  <section class="metrics-row" aria-label="Market summary">
-    <article class="metric-card">
-      <span class="metric-label">Last Price</span>
-      <strong class="metric-value" id="lastPrice">—</strong>
-      <small class="metric-sub" id="changePct">—</small>
-      <div class="metric-trend" id="priceTrend"></div>
-    </article>
-    <article class="metric-card">
-      <span class="metric-label">Signal</span>
-      <strong class="metric-value" id="signalText">—</strong>
-      <small class="metric-sub" id="signalMeta">—</small>
-    </article>
-    <article class="metric-card">
-      <span class="metric-label">Score / RSI</span>
-      <strong class="metric-value" id="scoreText">—</strong>
-      <small class="metric-sub" id="rsiText">—</small>
-    </article>
-    <article class="metric-card">
-      <span class="metric-label">Position</span>
-      <strong class="metric-value" id="positionText">—</strong>
-      <small class="metric-sub" id="positionMeta">—</small>
-    </article>
-  </section>
-
-  <!-- Main workspace -->
-  <main class="workspace" id="mainWorkspace">
-
-    <!-- Left column: chart + score/rsi + tracker -->
-    <div class="col-left">
-
-      <section class="panel chart-panel" aria-label="Price chart">
-        <div class="panel-head">
+        <div class="clear-confirm" id="reportsClearConfirm" hidden>
           <div>
-            <h2 id="priceChartTitle">Price + Strategy Line</h2>
-            <p id="priceChartSub">Candlestick with Supertrend overlay</p>
+            <strong>Clear all history?</strong><br>
+            <span>Deletes trades, signals, candles &amp; snapshots. Settings kept.</span>
           </div>
-          <div style="display:flex;align-items:center;gap:10px;">
-            <span class="live-badge" id="chartLiveBadge" style="display:none;">Live</span>
-            <div class="chart-legend">
-              <span class="legend-item long">Long entry</span>
-              <span class="legend-item short">Short entry</span>
+          <div class="clear-actions">
+            <input id="reportsClearConfirmInput" autocomplete="off" spellcheck="false" placeholder="Type CLEAR HISTORY to confirm" />
+            <button id="reportsClearConfirmBtn" type="button" class="btn-danger-solid">Confirm</button>
+            <button id="reportsClearCancelBtn" type="button" class="btn-ghost">Cancel</button>
+          </div>
+        </div>
+
+        <div id="reportsStatus" class="reports-status" aria-live="polite"></div>
+
+        <div>
+          <div class="rep-sec-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Performance Summary
+          </div>
+          <div class="reports-overview" id="reportsOverview">
+            <div class="rep-stat"><span class="rep-stat-label">Total Trades</span><span class="rep-stat-value" id="rStatTotal">—</span></div>
+            <div class="rep-stat"><span class="rep-stat-label">Win Rate</span><span class="rep-stat-value" id="rStatWinRate">—</span></div>
+            <div class="rep-stat"><span class="rep-stat-label">Net PnL</span><span class="rep-stat-value" id="rStatNetPnl">—</span></div>
+            <div class="rep-stat"><span class="rep-stat-label">Profit Factor</span><span class="rep-stat-value" id="rStatPF">—</span></div>
+            <div class="rep-stat"><span class="rep-stat-label">Max Drawdown</span><span class="rep-stat-value" id="rStatDD">—</span></div>
+            <div class="rep-stat"><span class="rep-stat-label">Avg Duration</span><span class="rep-stat-value" id="rStatDur">—</span></div>
+          </div>
+        </div>
+
+        <div>
+          <div class="rep-sec-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+            Email Report
+          </div>
+          <p style="font-size:.72rem;color:var(--tx-3);margin:.5rem 0">Auto-sends daily at <strong style="color:var(--tx-1)">8:00 PM IST</strong> &middot; <code>.env &rarr; REPORT_EMAIL_TO</code></p>
+          <div class="email-row">
+            <input type="email" id="reportEmailInput" placeholder="Override: send now to&hellip;" />
+            <button id="btnSendReport" class="btn-send-report">Send Now</button>
+          </div>
+        </div>
+
+        <div>
+          <div class="rep-sec-title">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            Trade Log
+          </div>
+          <div class="reports-table-wrap">
+            <div class="reports-table-scroll">
+              <table class="reports-table">
+                <thead>
+                  <tr>
+                    <th>ID</th><th>Pair</th><th>Side</th><th>Market</th><th>Exec</th><th>Strategy</th>
+                    <th>Entry</th><th>Exit</th><th>Entry Px</th><th>Exit Px</th>
+                    <th>Stop</th><th>Target</th><th>Qty</th><th>Risk</th><th>PnL</th><th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="reportsTableBody">
+                  <tr><td colspan="16" class="empty-state-cell">
+                    <div class="empty-state">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      <span>Click Load to fetch trade data</span>
+                    </div>
+                  </td></tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
-        <div id="priceChart" class="lwc-container"></div>
-      </section>
 
-      <div class="score-rsi-row">
-        <section class="panel score-panel" aria-label="Strategy score">
-          <div class="panel-head">
-            <h2 id="scoreChartTitle">Score</h2>
-            <p id="scoreChartText">−5 to +5 confluence vote</p>
-          </div>
-          <canvas id="scoreChart" height="140"></canvas>
-        </section>
+      </div>
+    </div>
+  </aside>
 
-        <section class="panel rsi-panel" aria-label="RSI">
-          <div class="panel-head">
-            <h2>RSI</h2>
-            <p>Overbought &gt; 70 · Oversold &lt; 30</p>
-          </div>
-          <canvas id="rsiChart" height="140"></canvas>
-        </section>
+  <!-- ── Page Wrap ─────────────────────────────────────────────────────────── -->
+  <div class="page-wrap" id="pageContent">
+
+    <!-- ── Topbar ────────────────────────────────────────────────────────────── -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <button id="menuButton" type="button" class="menu-btn" aria-label="Open menu" aria-controls="sideDrawer" aria-expanded="false">
+          <span aria-hidden="true"></span>
+          <span aria-hidden="true"></span>
+          <span aria-hidden="true"></span>
+        </button>
+        <div class="topbar-brand">
+          <h1>CoinDCX Pro</h1>
+          <span class="brand-ver" aria-hidden="true">v2</span>
+        </div>
+        <div class="ws-pill" id="wsStatus" title="WebSocket connection">
+          <span class="ws-dot" id="wsDot" aria-hidden="true"></span>
+          <span id="wsLabel">Connecting</span>
+        </div>
+        <span class="topbar-clock" id="topbarTime" aria-label="Current time"></span>
       </div>
 
-      <!-- Futures Tracker -->
-      <div class="tracker-sidebar" id="trackerSidebar">
-        <button class="tracker-collapse-btn" id="trackerCollapseBtn" title="Toggle tracker panel">
-          <span class="collapse-icon">◀</span>
+      <div class="topbar-inputs">
+        <div class="topbar-field">
+          <label for="pairInput">Pair</label>
+          <input id="pairInput" value="B-ETH_USDT" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="topbar-divider" aria-hidden="true"></div>
+        <div class="topbar-field">
+          <label for="marketInput">Market</label>
+          <input id="marketInput" value="ETHUSDT" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="topbar-divider" aria-hidden="true"></div>
+        <div class="topbar-field">
+          <label for="riskInput">Risk $</label>
+          <input id="riskInput" type="number" min="0.01" step="1" value="10" style="width:70px" />
+        </div>
+        <div class="topbar-divider pair2-field" aria-hidden="true"></div>
+        <div class="topbar-field pair2-field">
+          <label for="pair2Input">Pair 2</label>
+          <input id="pair2Input" placeholder="B-BTC_USDT" autocomplete="off" spellcheck="false" />
+        </div>
+        <div class="topbar-divider pair2-field" aria-hidden="true"></div>
+        <div class="topbar-field pair2-field">
+          <label for="market2Input">Market 2</label>
+          <input id="market2Input" placeholder="BTCUSDT" autocomplete="off" spellcheck="false" />
+        </div>
+      </div>
+    </header>
+
+    <!-- ── Controls Bar ──────────────────────────────────────────────────────── -->
+    <nav class="controls-bar" aria-label="Strategy controls">
+
+      <div class="ctrl-field">
+        <span class="ctrl-label">Strategy</span>
+        <select id="strategyInput">
+          <option value="arbitrage">Arbitrage</option>
+          <option value="confluence" selected>Confluence</option>
+          <option value="daily_sweep">Daily Sweep</option>
+          <option value="funding_basis">Funding / Basis</option>
+          <option value="mean_reversion">Mean Reversion</option>
+          <option value="mixed_consensus">Mixed Consensus</option>
+          <option value="pairs_stat_arb">Pairs Arb</option>
+          <option value="trend_following">Trend Following</option>
+          <option value="volatility_squeeze">Vol Squeeze</option>
+        </select>
+      </div>
+
+      <div class="ctrl-field">
+        <span class="ctrl-label">Mode</span>
+        <select id="modeInput">
+          <option value="spot">Spot</option>
+          <option value="margin">Margin</option>
+          <option value="futures" selected>Futures</option>
+        </select>
+      </div>
+
+      <div class="ctrl-field">
+        <span class="ctrl-label">Timeframe</span>
+        <select id="timeframeInput">
+          <option value="5m">5m</option>
+          <option value="15m" selected>15m</option>
+          <option value="1h">1h</option>
+          <option value="4h">4h</option>
+        </select>
+      </div>
+
+      <div class="ctrl-field">
+        <span class="ctrl-label">Lookback (days)</span>
+        <input id="lookbackInput" type="number" min="1" max="30" value="3" style="width:60px" />
+      </div>
+
+      <div class="exec-toggle-wrap" id="executionGuard">
+        <span class="ctrl-label">Execution</span>
+        <label class="exec-toggle-inner" title="Real orders require credentials and execution flags in .env">
+          <input id="realOrdersToggle" type="checkbox" />
+          <span class="switch-track" aria-hidden="true"></span>
+          <strong id="executionModeLabel">Paper only</strong>
+        </label>
+      </div>
+
+      <div class="ctrl-field">
+        <button id="refreshButton" type="button" class="btn-primary" data-loading="false">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+          Refresh
         </button>
-        <section class="panel tracker-panel" aria-label="Futures strategy tracker">
-          <div class="panel-head tracker-head">
-            <div>
+      </div>
+
+      <div class="tracked-coins-menu" id="trackedCoinsMenu" style="display:none">
+        <span class="menu-label">Tracking:</span>
+        <div class="coins-menu-items" id="coinsMenuItems"></div>
+      </div>
+
+      <span class="feed-chip" id="feedText" aria-live="polite">Feed: —</span>
+    </nav>
+
+    <!-- ── Account Strip ─────────────────────────────────────────────────────── -->
+    <section class="account-strip" aria-label="Account overview">
+
+      <div class="acc-card">
+        <div class="acc-card-row">
+          <span class="acc-label">Wallet Balance</span>
+          <button id="refreshAccountButton" type="button" class="btn-ghost" data-loading="false" style="height:22px;padding:0 8px;font-size:.62rem">Refresh</button>
+        </div>
+        <span class="acc-value mono" id="walletBalance">—</span>
+        <span class="acc-meta" id="walletStatus">Add API keys in .env to connect</span>
+      </div>
+
+      <div class="acc-card">
+        <span class="acc-label">Active Positions</span>
+        <span class="acc-value mono" id="positionsCount">—</span>
+        <span class="acc-meta" id="positionsMeta">—</span>
+      </div>
+
+      <div class="acc-card">
+        <span class="acc-label">Unrealized PnL</span>
+        <span class="acc-value mono" id="accountPnl">—</span>
+        <span class="acc-meta" id="accountModeText">Futures account</span>
+      </div>
+
+      <div class="acc-card">
+        <span class="acc-label">Risk / Sizing</span>
+        <span class="acc-value mono" id="currentRiskText">—</span>
+        <div class="risk-row" id="riskButtons"></div>
+        <div class="custom-risk-row">
+          <input id="customRiskInput" type="number" min="0.0001" step="0.01" placeholder="Custom $" />
+          <button id="applyCustomRiskButton" type="button" class="btn-ghost">Apply</button>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ── Metrics Strip ─────────────────────────────────────────────────────── -->
+    <section class="metrics-strip" aria-label="Market metrics">
+
+      <div class="metric-card">
+        <div class="metric-icon blue" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        </div>
+        <div class="metric-body">
+          <span class="metric-label">Last Price</span>
+          <span class="metric-value mono" id="lastPrice">—</span>
+          <span class="metric-sub" id="changePct">—</span>
+        </div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-icon bull" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <div class="metric-body">
+          <span class="metric-label">Signal</span>
+          <span class="metric-value" id="signalText">—</span>
+          <span class="metric-sub" id="signalMeta">—</span>
+        </div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-icon violet" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        </div>
+        <div class="metric-body">
+          <span class="metric-label">Score / RSI</span>
+          <span class="metric-value mono" id="scoreText">—</span>
+          <span class="metric-sub" id="rsiText">—</span>
+        </div>
+      </div>
+
+      <div class="metric-card">
+        <div class="metric-icon amber" aria-hidden="true">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+        </div>
+        <div class="metric-body">
+          <span class="metric-label">Position</span>
+          <span class="metric-value" id="positionText">—</span>
+          <span class="metric-sub" id="positionMeta">—</span>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ── Main Workspace ────────────────────────────────────────────────────── -->
+    <main class="workspace" id="mainWorkspace">
+
+      <!-- Chart column -->
+      <div class="main-col col-left">
+
+        <section class="panel chart-panel" aria-label="Price chart">
+          <div class="chart-hd">
+            <div class="chart-hd-left">
+              <h2 id="priceChartTitle">Price + Strategy Line</h2>
+              <p id="priceChartSub">Candlestick with Supertrend overlay</p>
+            </div>
+            <div class="chart-hd-right">
+              <span class="live-badge" id="chartLiveBadge" style="display:none" aria-live="polite">Live</span>
+              <div class="chart-legend" aria-hidden="true">
+                <span class="chart-leg bull">Long entry</span>
+                <span class="chart-leg bear">Short entry</span>
+              </div>
+            </div>
+          </div>
+          <div id="priceChart" class="lwc-container" role="img" aria-label="Price candlestick chart"></div>
+        </section>
+
+        <div class="chart-sub-row">
+          <div class="sub-chart-panel">
+            <div class="panel-hd">
+              <div class="panel-hd-left">
+                <h2>Score</h2>
+                <p>&minus;5 to +5 confluence vote</p>
+              </div>
+            </div>
+            <canvas id="scoreChart" aria-label="Strategy score chart"></canvas>
+          </div>
+          <div class="sub-chart-panel">
+            <div class="panel-hd">
+              <div class="panel-hd-left">
+                <h2>RSI</h2>
+                <p>Overbought &gt; 70 &middot; Oversold &lt; 30</p>
+              </div>
+            </div>
+            <canvas id="rsiChart" aria-label="RSI chart"></canvas>
+          </div>
+        </div>
+
+      </div><!-- /main-col -->
+
+      <!-- Tracker (second workspace column) -->
+      <div class="tracker-sidebar" id="trackerSidebar">
+        <button class="tracker-collapse-btn" id="trackerCollapseBtn" aria-label="Toggle tracker">
+          <span class="collapse-icon" aria-hidden="true">&#9664;</span>
+        </button>
+
+        <section class="panel tracker-panel" aria-label="Futures tracker">
+          <div class="tracker-hd">
+            <div class="tracker-hd-left">
               <h2>Futures Tracker</h2>
-              <p>Track strategy signals side-by-side.</p>
+              <p>Track strategy signals side-by-side</p>
             </div>
             <div class="tracker-actions">
               <button id="startTrackingButton" type="button" class="btn-secondary">Track</button>
               <button id="stopTrackingButton" type="button" class="btn-ghost">Stop</button>
             </div>
           </div>
-          <div class="tracker-inputs">
-            <input id="coinSearchInput" placeholder="Search BTC, ETH, SOL…" autocomplete="off" />
+
+          <div class="tracker-search-area">
+            <input id="coinSearchInput" placeholder="Search BTC, ETH, SOL&hellip;" autocomplete="off" spellcheck="false" />
             <div class="coin-picker" id="coinPicker"></div>
             <div class="add-coin-row">
-              <input id="customCoinInput" placeholder="Add custom (e.g. NEAR)" autocomplete="off" />
+              <input id="customCoinInput" placeholder="Add custom (e.g. NEAR)" autocomplete="off" spellcheck="false" />
               <button id="addCoinButton" type="button" class="btn-ghost">Add</button>
             </div>
           </div>
-          <p class="tracking-meta" id="trackingMeta">Not tracking yet</p>
-          <div class="table-wrap">
+
+          <p class="tracking-meta" id="trackingMeta" aria-live="polite">Not tracking yet</p>
+
+          <div class="tracker-table-wrap">
             <table class="data-table">
               <thead>
                 <tr>
-                  <th>Coin</th>
-                  <th>Price</th>
-                  <th>Signal</th>
-                  <th>Score</th>
-                  <th>RSI</th>
-                  <th>Position</th>
-                  <th>Str</th>
-                  <th>Fresh</th>
+                  <th>Coin</th><th>Price</th><th>Signal</th>
+                  <th>Score</th><th>RSI</th><th>Position</th>
+                  <th>Str</th><th>Fresh</th>
                 </tr>
               </thead>
               <tbody id="trackingBody">
-                <tr>
-                  <td colspan="8">
-                    <div class="empty-state">
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                      <span>Select coins above and click Track</span>
-                    </div>
-                  </td>
-                </tr>
+                <tr><td colspan="8" class="empty-state-cell">
+                  <div class="empty-state">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+                    <span>Select coins above and click Track</span>
+                  </div>
+                </td></tr>
               </tbody>
             </table>
           </div>
         </section>
-      </div>
+      </div><!-- /tracker-sidebar -->
 
-    </div><!-- /col-left -->
+      <!-- Drawer backdrop -->
+      <div id="drawerBackdrop" class="drawer-backdrop" hidden aria-hidden="true"></div>
 
-    <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
-
-    <!-- Drawer: intelligence + settings + details -->
-    <aside id="sideDrawer" class="col-right side-drawer" aria-label="Dashboard menu" aria-hidden="true">
-      <div class="drawer-head">
-        <div>
-          <h2>Menu</h2>
-          <p>Settings, intelligence, and bot details.</p>
-        </div>
-        <button id="drawerCloseButton" type="button" class="btn-ghost">Close</button>
-      </div>
-
-      <!-- Appearance -->
-      <section class="panel settings-panel" aria-label="Dashboard settings">
-        <div class="panel-head">
-          <div>
-            <h2>Appearance</h2>
-            <p>Theme is remembered across sessions.</p>
+      <!-- Side Drawer -->
+      <aside id="sideDrawer" class="side-drawer" aria-label="Dashboard menu" aria-hidden="true">
+        <div class="drawer-hd">
+          <div class="drawer-hd-left">
+            <h2>Menu</h2>
+            <p>Settings, intelligence &amp; strategy details</p>
           </div>
+          <button id="drawerCloseButton" type="button" class="btn-ghost" aria-label="Close menu">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            Close
+          </button>
         </div>
-        <label class="ctrl-label theme-field">
-          <span>Theme</span>
-          <select id="themeSelect">
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-            <option value="contrast">High Contrast</option>
-          </select>
-        </label>
-      </section>
 
-      <!-- Smart Money Intelligence -->
-      <section class="panel intelligence-panel" aria-label="Smart money intelligence">
-        <div class="panel-head">
-          <div>
-            <h2>Smart Money</h2>
-            <p>Binance Web3 signals · refreshed every 60s</p>
+        <div class="drawer-body">
+
+          <!-- Appearance -->
+          <div class="drawer-section">
+            <div class="drawer-section-hd">
+              <div class="drawer-section-hd-left">
+                <h2>Appearance</h2>
+                <p>Theme remembered across sessions</p>
+              </div>
+            </div>
+            <div class="theme-row">
+              <select id="themeSelect" aria-label="Select theme">
+                <option value="dark">Dark</option>
+                <option value="light">Light</option>
+                <option value="contrast">High Contrast</option>
+              </select>
+            </div>
           </div>
-          <div class="chain-select">
-            <select id="chainSelect">
-              <option value="CT_501">Solana</option>
-              <option value="56">BSC</option>
-            </select>
+
+          <!-- Smart Money Intelligence -->
+          <div class="drawer-section">
+            <div class="drawer-section-hd">
+              <div class="drawer-section-hd-left">
+                <h2>Smart Money</h2>
+                <p>Binance Web3 signals &middot; refreshed every 60s</p>
+              </div>
+              <div class="chain-select">
+                <select id="chainSelect" aria-label="Select chain">
+                  <option value="CT_501">Solana</option>
+                  <option value="56">BSC</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="intel-hd">Signals</div>
+            <div class="table-wrap">
+              <table class="data-table" id="signalsTable">
+                <thead>
+                  <tr>
+                    <th>Token</th><th>Dir</th><th>Wallets</th>
+                    <th>Max Gain</th><th>Exit %</th><th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="signalsBody">
+                  <tr><td colspan="6" class="empty-state-cell">
+                    <div class="empty-state">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                      <span>Loading smart money data&hellip;</span>
+                    </div>
+                  </td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="intel-update" id="signalsUpdateTime" aria-live="polite"></div>
+
+            <div class="intel-hd" style="margin-top:14px">Smart Money Inflow Rank (24h)</div>
+            <div class="table-wrap">
+              <table class="data-table" id="rankTable">
+                <thead>
+                  <tr>
+                    <th>#</th><th>Token</th><th>Price Chg</th>
+                    <th>Inflow</th><th>Wallets</th>
+                  </tr>
+                </thead>
+                <tbody id="rankBody">
+                  <tr><td colspan="5" class="empty-state-cell">
+                    <div class="empty-state">
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
+                      <span>Loading inflow rankings&hellip;</span>
+                    </div>
+                  </td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="intel-update" id="rankUpdateTime" aria-live="polite"></div>
           </div>
-        </div>
 
-        <div class="intel-sub-head">Signals</div>
-        <div class="table-wrap">
-          <table class="data-table intel-table" id="signalsTable">
-            <thead>
-              <tr>
-                <th>Token</th>
-                <th>Dir</th>
-                <th>Wallets</th>
-                <th>Max Gain</th>
-                <th>Exit %</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="signalsBody">
-              <tr>
-                <td colspan="6">
-                  <div class="empty-state">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                    <span>Loading smart money data…</span>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="intel-update-time" id="signalsUpdateTime"></div>
-
-        <div class="intel-sub-head" style="margin-top:14px">Smart Money Inflow Rank (24h)</div>
-        <div class="table-wrap">
-          <table class="data-table intel-table" id="rankTable">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Token</th>
-                <th>Price Chg</th>
-                <th>Inflow</th>
-                <th>Wallets</th>
-              </tr>
-            </thead>
-            <tbody id="rankBody">
-              <tr>
-                <td colspan="5">
-                  <div class="empty-state">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="12" y1="20" x2="12" y2="10"/><line x1="18" y1="20" x2="18" y2="4"/><line x1="6" y1="20" x2="6" y2="16"/></svg>
-                    <span>Loading inflow rankings…</span>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <div class="intel-update-time" id="rankUpdateTime"></div>
-      </section>
-
-      <!-- Strategy Details + Trade State + Events -->
-      <section class="panel details-panel" aria-label="Strategy details">
-        <div class="details-grid">
-          <div class="detail-block">
-            <h2>Strategy</h2>
-            <dl id="strategyList" class="def-list"></dl>
+          <!-- Strategy Details -->
+          <div class="drawer-section">
+            <div class="details-grid">
+              <div class="detail-block">
+                <h2>Strategy</h2>
+                <dl id="strategyList" class="def-list"></dl>
+              </div>
+              <div class="detail-block">
+                <h2>Trade State</h2>
+                <dl id="stateList" class="def-list"></dl>
+              </div>
+              <div class="detail-block events-block">
+                <h2>Bot Events</h2>
+                <ol id="eventList" class="event-list" aria-live="polite" aria-atomic="false"></ol>
+              </div>
+            </div>
           </div>
-          <div class="detail-block">
-            <h2>Trade State</h2>
-            <dl id="stateList" class="def-list"></dl>
+
+          <!-- Trade Journal -->
+          <div class="drawer-section">
+            <div class="drawer-section-hd">
+              <div class="drawer-section-hd-left">
+                <h2>Trade Journal</h2>
+                <p>Recent completed trades</p>
+              </div>
+              <button id="refreshJournalButton" type="button" class="btn-ghost" data-loading="false">Refresh</button>
+            </div>
+            <div class="table-wrap">
+              <table class="data-table journal-table">
+                <thead>
+                  <tr>
+                    <th>#</th><th>Pair</th><th>Side</th>
+                    <th>Entry</th><th>Exit</th><th>PnL</th><th>Reason</th>
+                  </tr>
+                </thead>
+                <tbody id="journalBody">
+                  <tr><td colspan="7" class="empty-state-cell">
+                    <div class="empty-state">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
+                      <span>No trades logged yet</span>
+                    </div>
+                  </td></tr>
+                </tbody>
+              </table>
+            </div>
           </div>
-          <div class="detail-block events-block">
-            <h2>Bot Events</h2>
-            <ol id="eventList" class="event-list"></ol>
+
+        </div><!-- /drawer-body -->
+      </aside>
+
+    </main><!-- /workspace -->
+
+    <!-- ── Section Separator ─────────────────────────────────────────────────── -->
+    <div class="section-sep" aria-hidden="true">System Overview</div>
+
+    <!-- ── Bottom Grid ──────────────────────────────────────────────────────── -->
+    <section class="bottom-grid" aria-label="System overview">
+
+      <section class="panel" aria-label="Active positions">
+        <div class="panel-hd">
+          <div class="panel-hd-left">
+            <h2>Active Positions</h2>
+            <p>Live positions across tracked coins</p>
           </div>
-        </div>
-      </section>
-
-      <!-- Trade Journal -->
-      <section class="panel journal-panel" aria-label="Trade journal">
-        <div class="panel-head">
-          <h2>Trade Journal</h2>
-          <button id="refreshJournalButton" type="button" class="btn-ghost" data-loading="false">Refresh</button>
-        </div>
-        <div class="table-wrap">
-          <table class="data-table journal-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Pair</th>
-                <th>Side</th>
-                <th>Entry</th>
-                <th>Exit</th>
-                <th>PnL</th>
-                <th>Reason</th>
-              </tr>
-            </thead>
-            <tbody id="journalBody">
-              <tr>
-                <td colspan="7">
-                  <div class="empty-state">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-                    <span>No trades logged yet</span>
-                  </div>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-    </aside><!-- /side-drawer -->
-  </main>
-
-  <!-- System Section Label -->
-  <div class="section-label">System Overview</div>
-
-  <!-- Bottom section: Performance & Logs -->
-  <section class="bottom-section" aria-label="Performance and execution logs">
-    <div class="bottom-grid">
-
-      <!-- Active Positions -->
-      <section class="panel active-positions-panel" aria-label="Active positions on tracked coins">
-        <div class="panel-head">
-          <h2>Active Positions</h2>
-          <p>Live positions across tracked coins</p>
         </div>
         <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Coin</th>
-                <th>Side</th>
-                <th>Qty</th>
-                <th>Entry</th>
-                <th>Mark</th>
-                <th>SL</th>
-                <th>TP</th>
-                <th>PnL</th>
+                <th>Coin</th><th>Side</th><th>Qty</th><th>Entry</th>
+                <th>Mark</th><th>SL</th><th>TP</th><th>PnL</th>
               </tr>
             </thead>
             <tbody id="positionsBody">
-              <tr>
-                <td colspan="8">
-                  <div class="empty-state">
-                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
-                    <span>No active positions on tracked coins</span>
-                  </div>
-                </td>
-              </tr>
+              <tr><td colspan="8" class="empty-state-cell">
+                <div class="empty-state">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 7V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v2"/></svg>
+                  <span>No active positions on tracked coins</span>
+                </div>
+              </td></tr>
             </tbody>
           </table>
         </div>
       </section>
 
-      <!-- Performance Stats -->
-      <section class="panel performance-panel" aria-label="Trading performance">
-        <div class="panel-head">
-          <h2>Performance</h2>
-          <p>Win rate and statistics</p>
+      <section class="panel" aria-label="Trading performance">
+        <div class="panel-hd">
+          <div class="panel-hd-left">
+            <h2>Performance</h2>
+            <p>Win rate and trade statistics</p>
+          </div>
         </div>
         <div class="perf-grid">
           <div class="perf-stat">
             <span class="perf-label">Win Rate</span>
             <strong class="perf-value" id="winRate">—</strong>
-            <div class="progress-bar"><div class="progress-fill long" id="winRateBar" style="width:0%"></div></div>
+            <div class="prog-bar"><div class="prog-fill bull" id="winRateBar" style="width:0%"></div></div>
           </div>
           <div class="perf-stat">
             <span class="perf-label">Total Trades</span>
             <strong class="perf-value" id="totalTrades">—</strong>
-            <div class="progress-bar"><div class="progress-fill" id="totalTradesBar" style="width:0%"></div></div>
+            <div class="prog-bar"><div class="prog-fill" id="totalTradesBar" style="width:0%"></div></div>
           </div>
           <div class="perf-stat">
             <span class="perf-label">Profit Factor</span>
             <strong class="perf-value" id="profitFactor">—</strong>
-            <div class="progress-bar"><div class="progress-fill gold" id="pfBar" style="width:0%"></div></div>
+            <div class="prog-bar"><div class="prog-fill amber" id="pfBar" style="width:0%"></div></div>
           </div>
           <div class="perf-stat">
             <span class="perf-label">Max Drawdown</span>
             <strong class="perf-value" id="maxDrawdown">—</strong>
-            <div class="progress-bar"><div class="progress-fill short" id="ddBar" style="width:0%"></div></div>
+            <div class="prog-bar"><div class="prog-fill bear" id="ddBar" style="width:0%"></div></div>
           </div>
         </div>
       </section>
 
-      <!-- Execution Log -->
-      <section class="panel logs-panel" aria-label="Execution logs">
-        <div class="panel-head">
-          <h2>Execution Log</h2>
-          <p>Recent bot actions</p>
+      <section class="panel" aria-label="Execution logs">
+        <div class="panel-hd">
+          <div class="panel-hd-left">
+            <h2>Execution Log</h2>
+            <p>Recent bot actions</p>
+          </div>
         </div>
-        <div class="logs-container">
-          <ol id="executionLog" class="log-list"></ol>
-        </div>
+        <ol id="executionLog" class="log-list" aria-live="polite" aria-atomic="false"></ol>
       </section>
 
-    </div>
-  </section>
+    </section>
 
-  <script src="/app.js?v=20260514-ui-redesign"></script>
+  </div><!-- /page-wrap -->
 
-  <!-- Topbar clock + market strip live sync -->
+  <!-- ── Toast ─────────────────────────────────────────────────────────────── -->
+  <div class="toast-msg" id="toastMsg" role="status" aria-live="polite" aria-atomic="true"></div>
+
+  <script src="/app.js?v=20260514"></script>
   <script>
-    (function() {
-      function padZ(n) { return String(n).padStart(2,'0'); }
+    (function () {
+      function pad(n) { return String(n).padStart(2, '0'); }
       function tick() {
-        const el = document.getElementById('topbarTime');
+        var el = document.getElementById('topbarTime');
         if (!el) return;
-        const d = new Date();
-        el.textContent = padZ(d.getHours()) + ':' + padZ(d.getMinutes()) + ':' + padZ(d.getSeconds());
+        var d = new Date();
+        el.textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
       }
       tick();
       setInterval(tick, 1000);
-
-      // Execution guard visual state
-      const toggle = document.getElementById('realOrdersToggle');
-      const guard  = document.getElementById('executionGuard');
+      var toggle = document.getElementById('realOrdersToggle');
+      var guard  = document.getElementById('executionGuard');
       if (toggle && guard) {
-        toggle.addEventListener('change', function() {
+        toggle.addEventListener('change', function () {
           guard.classList.toggle('is-real', this.checked);
         });
       }
-
-      // Market status strip — sync from WS & controls
-      function updateStrip() {
-        const pair = document.getElementById('pairInput');
-        const mode = document.getElementById('modeInput');
-        const strat = document.getElementById('strategyInput');
-        const mssP = document.getElementById('mssCurrentPair');
-        const mssM = document.getElementById('mssMktMode');
-        const mssS = document.getElementById('mssStrategy');
-        if (pair && mssP) mssP.textContent = pair.value || '—';
-        if (mode && mssM) mssM.textContent = mode.value || '—';
-        if (strat && mssS) mssS.textContent = strat.options[strat.selectedIndex]?.text || '—';
-      }
-      updateStrip();
-      ['pairInput','modeInput','strategyInput'].forEach(function(id) {
-        const el = document.getElementById(id);
-        if (el) el.addEventListener('change', updateStrip);
-      });
     })();
   </script>
 
-</div><!-- /page-content -->
-
-<div class="toast-msg" id="toastMsg" role="status" aria-live="polite" aria-atomic="true"></div>
 </body>
-
 </html>

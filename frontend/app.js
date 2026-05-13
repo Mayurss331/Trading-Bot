@@ -287,13 +287,11 @@ function saveDashboardPreferences() {
     savedAt: new Date().toISOString(),
     pair: el.pair.value.trim(),
     market: el.market.value.trim(),
-    strategy: el.strategy?.value || DEFAULT_STRATEGY,
-    timeframe: el.timeframe?.value || DEFAULT_TIMEFRAME,
-    strategy: el.strategy.value,
+    strategy: normalizeStrategy(el.strategy?.value),
+    timeframe: normalizeTimeframe(el.timeframe?.value),
     mode: el.mode.value,
     risk: el.risk.value,
     lookback: el.lookback.value,
-    timeframe: normalizeTimeframe(el.timeframe?.value),
     pair2: el.pair2?.value?.trim() || '',
     market2: el.market2?.value?.trim() || '',
     chain: el.chainSelect?.value || 'CT_501',
@@ -1339,6 +1337,9 @@ async function loadTimeframes() {
     applySelectOptions(el.timeframe, timeframes, pref.timeframe, DEFAULT_TIMEFRAME);
   } catch (err) {
     console.error('Failed to load timeframes', err);
+  }
+}
+
 function setReportsStatus(message, type = '') {
   if (!el.reportsStatus) return;
   el.reportsStatus.textContent = message || '';
