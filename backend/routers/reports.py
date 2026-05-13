@@ -7,10 +7,10 @@ from datetime import datetime
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 
 from ..db.database import AsyncSessionLocal
-from ..db.models import Trade
+from ..db.models import AccountSnapshot, Candle, PositionSnapshot, SignalEvent, StateSnapshot, Trade
 from ..utils import clean
 
 router = APIRouter(tags=["reports"])
@@ -49,44 +49,66 @@ async def report_trades(
     limit = max(1, min(limit, 500))
     offset = max(0, offset)
 
-    stmt = select(Trade)
+    filters = []
     if exec_mode in {"paper", "real"}:
-        stmt = stmt.where(Trade.execution_mode == exec_mode)
+        filters.append(Trade.execution_mode == exec_mode)
     if pair:
-        stmt = stmt.where(Trade.pair == pair)
+        filters.append(Trade.pair == pair)
     if date_from:
         try:
-            stmt = stmt.where(Trade.entry_ts >= datetime.fromisoformat(date_from))
+            filters.append(Trade.entry_ts >= datetime.fromisoformat(date_from))
         except ValueError:
             pass
     if date_to:
         try:
-            stmt = stmt.where(Trade.entry_ts <= datetime.fromisoformat(date_to))
+            filters.append(Trade.entry_ts <= datetime.fromisoformat(date_to))
         except ValueError:
             pass
-    stmt = stmt.order_by(Trade.entry_ts.desc()).limit(limit).offset(offset)
+    stmt = select(Trade).where(*filters).order_by(Trade.entry_ts.desc()).limit(limit).offset(offset)
+    count_stmt = select(func.count()).select_from(Trade).where(*filters)
 
     async with AsyncSessionLocal() as db:
+        total_result = await db.execute(count_stmt)
         result = await db.execute(stmt)
+        total = int(total_result.scalar() or 0)
         trades = result.scalars().all()
 
-    return JSONResponse({"ok": True, "count": len(trades), "trades": [_trade_row(t) for t in trades]})
+    return JSONResponse({
+        "ok": True,
+        "count": len(trades),
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "trades": [_trade_row(t) for t in trades],
+    })
 
 
 @router.get("/api/reports/overview")
 async def report_overview(exec_mode: str = "all") -> JSONResponse:
-    stmt = select(Trade).where(Trade.exit_ts.isnot(None))
+    filters = []
     if exec_mode in {"paper", "real"}:
-        stmt = stmt.where(Trade.execution_mode == exec_mode)
+        filters.append(Trade.execution_mode == exec_mode)
+
+    closed_filters = [*filters, Trade.exit_ts.isnot(None)]
+    stmt = select(Trade).where(*closed_filters).order_by(Trade.exit_ts.asc(), Trade.entry_ts.asc())
+    total_stmt = select(func.count()).select_from(Trade).where(*filters)
+    open_stmt = select(func.count()).select_from(Trade).where(*filters, Trade.exit_ts.is_(None))
 
     async with AsyncSessionLocal() as db:
+        total_result = await db.execute(total_stmt)
+        open_result = await db.execute(open_stmt)
         result = await db.execute(stmt)
+        total_trades = int(total_result.scalar() or 0)
+        open_trades = int(open_result.scalar() or 0)
         trades = result.scalars().all()
 
     if not trades:
         return JSONResponse({
             "ok": True, "exec_mode": exec_mode,
-            "total_trades": 0, "wins": 0, "losses": 0, "win_rate": None,
+            "total_trades": total_trades,
+            "closed_trades": 0,
+            "open_trades": open_trades,
+            "wins": 0, "losses": 0, "win_rate": None,
             "net_pnl": 0.0, "profit_factor": None, "max_drawdown": None,
             "avg_duration_minutes": None,
         })
@@ -121,7 +143,9 @@ async def report_overview(exec_mode: str = "all") -> JSONResponse:
     return JSONResponse(clean({
         "ok": True,
         "exec_mode": exec_mode,
-        "total_trades": len(trades),
+        "total_trades": total_trades,
+        "closed_trades": len(trades),
+        "open_trades": open_trades,
         "wins": len(wins),
         "losses": len(losses),
         "win_rate": win_rate,
@@ -165,11 +189,19 @@ class SendEmailRequest(BaseModel):
     to: str
 
 
+class ClearHistoryRequest(BaseModel):
+    confirm: str
+
+
 def _trade_dicts(trades) -> list[dict]:
     return [_trade_row(t) for t in trades]
 
 
-async def dispatch_report(to_email: str) -> dict:
+def _parse_emails(raw: str) -> list[str]:
+    return [addr.strip() for addr in raw.split(",") if addr.strip() and "@" in addr.strip()]
+
+
+async def dispatch_report(to_emails: list[str]) -> dict:
     """Core report dispatch — shared by the API endpoint and the daily scheduler."""
     now = datetime.utcnow()
 
@@ -192,7 +224,7 @@ async def dispatch_report(to_email: str) -> dict:
         p_pdf = generate_pdf(paper_dicts, "Paper Trade Report", now) if paper_dicts else None
         r_pdf = generate_pdf(real_dicts, "Real Trade Report", now) if real_dicts else None
         send_report_email(
-            to_email=to_email,
+            to_emails=to_emails,
             paper_pdf=p_pdf,
             real_pdf=r_pdf,
             paper_count=len(paper_dicts),
@@ -209,7 +241,8 @@ async def dispatch_report(to_email: str) -> dict:
     if real_pdf:
         attachments.append("real_trades.pdf")
 
-    msg = f"Report sent to {to_email}."
+    recipients = ", ".join(to_emails)
+    msg = f"Report sent to {recipients}."
     if attachments:
         msg += f" Attached: {', '.join(attachments)}."
     else:
@@ -218,13 +251,48 @@ async def dispatch_report(to_email: str) -> dict:
     return {"ok": True, "message": msg, "paper_count": len(paper_dicts), "real_count": len(real_dicts)}
 
 
+@router.post("/api/reports/clear-history")
+async def clear_history(body: ClearHistoryRequest) -> JSONResponse:
+    if body.confirm.strip() != "CLEAR HISTORY":
+        return JSONResponse({
+            "ok": False,
+            "message": "Type CLEAR HISTORY to confirm.",
+        }, status_code=400)
+
+    from ..bot_loader import bot
+
+    discarded_pending = len(bot.drain_completed_trades())
+    counts: dict[str, int] = {}
+    async with AsyncSessionLocal() as db:
+        for name, model in [
+            ("position_snapshots", PositionSnapshot),
+            ("account_snapshots", AccountSnapshot),
+            ("signal_events", SignalEvent),
+            ("snapshots", StateSnapshot),
+            ("candles_5m", Candle),
+            ("trades", Trade),
+        ]:
+            count_result = await db.execute(select(func.count()).select_from(model))
+            counts[name] = int(count_result.scalar() or 0)
+            await db.execute(delete(model))
+        await db.commit()
+
+    total = sum(counts.values())
+    return JSONResponse({
+        "ok": True,
+        "message": f"Cleared {total} history row(s).",
+        "deleted": counts,
+        "discarded_pending_trades": discarded_pending,
+    })
+
+
 @router.post("/api/reports/send-email")
 async def send_email_report(body: SendEmailRequest) -> JSONResponse:
-    to_email = body.to.strip()
-    if not to_email or "@" not in to_email:
-        return JSONResponse({"ok": False, "message": "Invalid email address."}, status_code=400)
+    to_emails = _parse_emails(body.to)
+    if not to_emails:
+        return JSONResponse({"ok": False, "message": "No valid email address provided."}, status_code=400)
     try:
-        result = await dispatch_report(to_email)
+        result = await dispatch_report(to_emails)
         return JSONResponse(result)
     except RuntimeError as exc:
         return JSONResponse({"ok": False, "message": str(exc)}, status_code=500)
