@@ -33,21 +33,36 @@ async def account(
         })
 
     def _sync_account() -> dict:
-        available, currency = bot.fetch_available_quote_balance(cfg)
-        available = float(available or 0.0)
-        suggestions = [
-            {"label": "0.25%", "percent": 0.25, "amount": available * 0.0025},
-            {"label": "0.5%", "percent": 0.5, "amount": available * 0.005},
-            {"label": "1%", "percent": 1.0, "amount": available * 0.01},
-            {"label": "2%", "percent": 2.0, "amount": available * 0.02},
-        ]
         wallets: list = []
         positions: list = []
+        available: float = 0.0
+        currency: str = "USDT"
+
         if mode == "futures":
             try:
                 wallets = bot.fetch_futures_wallets(cfg)
+                for row in wallets:
+                    if str(row.get("currency_short_name", "")).upper() != cfg.futures_margin_currency:
+                        continue
+                    # prefer available_balance (excludes locked margin); fall back to balance
+                    available = float(
+                        row.get("available_balance")
+                        or row.get("balance")
+                        or 0.0
+                    )
+                    currency = cfg.futures_margin_currency
+                    break
             except Exception:
                 wallets = []
+        else:
+            try:
+                bal, cur = bot.fetch_available_quote_balance(cfg)
+                available = float(bal or 0.0)
+                currency = cur or "USDT"
+            except Exception:
+                pass
+
+        if mode == "futures":
             try:
                 data = bot._private_post(
                     "/exchange/v1/derivatives/futures/positions",
@@ -83,6 +98,12 @@ async def account(
                         })
             except Exception:
                 positions = []
+        suggestions = [
+            {"label": "0.25%", "percent": 0.25, "amount": available * 0.0025},
+            {"label": "0.5%",  "percent": 0.5,  "amount": available * 0.005},
+            {"label": "1%",    "percent": 1.0,  "amount": available * 0.01},
+            {"label": "2%",    "percent": 2.0,  "amount": available * 0.02},
+        ]
         return {
             "ok": True,
             "has_credentials": True,
