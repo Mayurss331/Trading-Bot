@@ -62,23 +62,42 @@ PRIVATE_BASE = "https://api.coindcx.com"
 TIMEFRAME = "15m"
 BAR_FREQ = "15min"
 BAR_MINUTES = 15
-SUPPORTED_TIMEFRAMES = {
-    "5m": 5,
-    "15m": 15,
-    "1h": 60,
+
+# (minutes, group, max_lookback_days, recommended_lookback_days)
+SUPPORTED_TIMEFRAMES: dict[str, tuple[int, str, int, int]] = {
+    "1m":  (1,    "minutes", 3,   1),
+    "3m":  (3,    "minutes", 7,   3),
+    "5m":  (5,    "minutes", 14,  7),
+    "15m": (15,   "minutes", 30,  14),
+    "30m": (30,   "minutes", 60,  30),
+    "1h":  (60,   "hours",   120, 60),
+    "2h":  (120,  "hours",   180, 90),
+    "4h":  (240,  "hours",   365, 180),
+    "6h":  (360,  "hours",   365, 180),
+    "12h": (720,  "hours",   365, 180),
+    "1d":  (1440, "daily",   365, 365),
+}
+
+_TF_LABELS: dict[str, str] = {
+    "1m": "1 Min", "3m": "3 Min", "5m": "5 Min",
+    "15m": "15 Min", "30m": "30 Min",
+    "1h": "1 Hour", "2h": "2 Hours", "4h": "4 Hours",
+    "6h": "6 Hours", "12h": "12 Hours",
+    "1d": "1 Day",
 }
 
 
 def list_timeframes() -> list[dict]:
-    ordered = sorted(SUPPORTED_TIMEFRAMES.items(), key=lambda item: item[1])
     out: list[dict] = []
-    for tf, minutes in ordered:
-        label = tf
-        if tf.endswith("m"):
-            label = f"{minutes}m"
-        elif tf.endswith("h"):
-            label = f"{minutes // 60}h"
-        out.append({"id": tf, "label": label, "minutes": minutes})
+    for tf, (minutes, group, max_lb, rec_lb) in SUPPORTED_TIMEFRAMES.items():
+        out.append({
+            "id": tf,
+            "label": _TF_LABELS.get(tf, tf),
+            "minutes": minutes,
+            "group": group,
+            "max_lookback_days": max_lb,
+            "recommended_lookback_days": rec_lb,
+        })
     return out
 MIN_WARMUP_BARS = 30
 
@@ -388,12 +407,13 @@ def _normalize_timeframe(tf: str | None) -> tuple[str, str, int]:
     value = str(tf or TIMEFRAME).strip().lower()
     if value not in SUPPORTED_TIMEFRAMES:
         value = TIMEFRAME
-    minutes = SUPPORTED_TIMEFRAMES[value]
+    minutes = SUPPORTED_TIMEFRAMES[value][0]
     if minutes < 60:
         freq = f"{minutes}min"
+    elif minutes < 1440:
+        freq = f"{minutes // 60}h"
     else:
-        hours = minutes // 60
-        freq = f"{hours}h"
+        freq = "D"
     return value, freq, minutes
 
 

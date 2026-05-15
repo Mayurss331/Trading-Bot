@@ -195,9 +195,12 @@ const el = {
   saveCustomStrategyBtn: $('saveCustomStrategyBtn'),
   validateCustomStrategyBtn: $('validateCustomStrategyBtn'),
   backtestStrategySelect: $('backtestStrategySelect'),
+  btTimeframeSelect: $('btTimeframeSelect'),
   btInitialCapital: $('btInitialCapital'),
   btRisk: $('btRisk'),
   btLookback: $('btLookback'),
+  btLookbackHint: $('btLookbackHint'),
+  btWarmupBars: $('btWarmupBars'),
   btCommission: $('btCommission'),
   btSpread: $('btSpread'),
   btSlippage: $('btSlippage'),
@@ -365,6 +368,7 @@ function saveDashboardPreferences() {
     market: el.market.value.trim(),
     strategy: normalizeStrategy(el.strategy?.value),
     timeframe: normalizeTimeframe(el.timeframe?.value),
+    btTimeframe: el.btTimeframeSelect?.value || DEFAULT_TIMEFRAME,
     mode: el.mode.value,
     risk: el.risk.value,
     lookback: el.lookback.value,
@@ -432,6 +436,10 @@ async function applyDashboardPreferences() {
   setValue(el.risk, prefs.risk);
   setValue(el.lookback, prefs.lookback);
   setValue(el.timeframe, normalizeTimeframe(prefs.timeframe));
+  if (prefs.btTimeframe && el.btTimeframeSelect) {
+    setValue(el.btTimeframeSelect, prefs.btTimeframe);
+    _applyLookbackConstraints(el.btTimeframeSelect.value);
+  }
   setValue(el.pair2, prefs.pair2);
   setValue(el.market2, prefs.market2);
   setValue(el.chainSelect, prefs.chain);
@@ -1749,8 +1757,9 @@ function backtestRequestPayload() {
     mode: el.mode.value || 'futures',
     strategy: kind === 'builtin' ? rawId : normalizeStrategy(el.strategy.value),
     custom_strategy_id: kind === 'custom' ? parseInt(rawId, 10) : null,
-    timeframe: normalizeTimeframe(el.timeframe?.value),
-    lookback_days: parseInt(el.btLookback?.value || el.lookback?.value || '30', 10),
+    timeframe: normalizeTimeframe(el.btTimeframeSelect?.value || el.timeframe?.value),
+    lookback_days: parseInt(el.btLookback?.value || el.lookback?.value || '14', 10),
+    warmup_bars: parseInt(el.btWarmupBars?.value || '50', 10),
     initial_capital: parseFloat(el.btInitialCapital?.value || '10000'),
     risk: parseFloat(el.btRisk?.value || el.risk?.value || '10'),
     commission_bps: parseFloat(el.btCommission?.value || '0'),
@@ -1972,16 +1981,59 @@ function drawBacktestEquityChart(points) {
   ctx.stroke();
 }
 
+// Keyed by timeframe id — holds max_lookback_days, recommended_lookback_days, group
+const _timeframeMeta = {};
+
+function _buildTimeframeOptgroups(selectEl, tfList, currentValue, fallback) {
+  if (!selectEl || !tfList.length) return;
+  const groups = {};
+  tfList.forEach(t => {
+    const g = t.group || 'other';
+    if (!groups[g]) groups[g] = [];
+    groups[g].push(t);
+  });
+  const groupOrder = ['minutes', 'hours', 'daily', 'other'];
+  const groupLabels = { minutes: 'Minutes', hours: 'Hours', daily: 'Daily', other: 'Other' };
+  selectEl.innerHTML = groupOrder
+    .filter(g => groups[g])
+    .map(g =>
+      `<optgroup label="${groupLabels[g]}">${
+        groups[g].map(t => `<option value="${t.id}">${t.label || t.id}</option>`).join('')
+      }</optgroup>`
+    ).join('');
+  const desired = currentValue || fallback || DEFAULT_TIMEFRAME;
+  const allValues = new Set(tfList.map(t => t.id));
+  selectEl.value = allValues.has(desired) ? desired : (allValues.has(fallback) ? fallback : tfList[0]?.id);
+}
+
+function _applyLookbackConstraints(tfId) {
+  const meta = _timeframeMeta[tfId];
+  if (!meta || !el.btLookback) return;
+  const maxDays = meta.max_lookback_days;
+  const recDays = meta.recommended_lookback_days;
+  el.btLookback.max = maxDays;
+  if (parseInt(el.btLookback.value, 10) > maxDays) el.btLookback.value = recDays;
+  if (el.btLookbackHint) {
+    el.btLookbackHint.textContent = `Max ${maxDays}d · Recommended ${recDays}d`;
+  }
+}
+
 async function loadTimeframes() {
   try {
     const res = await fetch('/api/timeframes');
     const data = await res.json();
     if (!data.ok) return;
-    const timeframes = (data.timeframes || [])
-      .map(t => ({ value: t.id, label: t.label || t.id }));
-    if (!timeframes.length) return;
+    const tfList = data.timeframes || [];
+    if (!tfList.length) return;
+    // Cache metadata for lookback constraint logic
+    tfList.forEach(t => { _timeframeMeta[t.id] = t; });
     const pref = readDashboardPreferences();
-    applySelectOptions(el.timeframe, timeframes, pref.timeframe, DEFAULT_TIMEFRAME);
+    // Dashboard timeframe (flat list, no optgroups needed)
+    const flatOpts = tfList.map(t => ({ value: t.id, label: t.label || t.id }));
+    applySelectOptions(el.timeframe, flatOpts, pref.timeframe, DEFAULT_TIMEFRAME);
+    // Backtest timeframe (grouped)
+    _buildTimeframeOptgroups(el.btTimeframeSelect, tfList, pref.btTimeframe || DEFAULT_TIMEFRAME, DEFAULT_TIMEFRAME);
+    _applyLookbackConstraints(el.btTimeframeSelect?.value || DEFAULT_TIMEFRAME);
   } catch (err) {
     console.error('Failed to load timeframes', err);
   }
@@ -2422,6 +2474,13 @@ function wireEvents() {
       if (state.trackingActive) {
         loadTracking();
       }
+    });
+  }
+
+  if (el.btTimeframeSelect) {
+    el.btTimeframeSelect.addEventListener('change', () => {
+      _applyLookbackConstraints(el.btTimeframeSelect.value);
+      saveDashboardPreferences();
     });
   }
 

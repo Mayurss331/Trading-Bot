@@ -1450,6 +1450,14 @@ body.drawer-open  { overflow: hidden; }
   letter-spacing: .06em;
 }
 .bt-form-grid .bt-wide { grid-column: span 2; }
+.bt-field-hint {
+  font-size: .58rem;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--tx-2);
+  opacity: .7;
+}
 .code-editor {
   width: 100%;
   min-height: 210px;

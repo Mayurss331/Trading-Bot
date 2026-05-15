@@ -305,16 +305,48 @@
           </div>
           <div class="bt-form-grid">
             <label>Strategy<select id="backtestStrategySelect"></select></label>
+            <label>Timeframe
+              <select id="btTimeframeSelect">
+                <optgroup label="Minutes">
+                  <option value="1m">1 Min</option>
+                  <option value="3m">3 Min</option>
+                  <option value="5m">5 Min</option>
+                  <option value="15m" selected>15 Min</option>
+                  <option value="30m">30 Min</option>
+                </optgroup>
+                <optgroup label="Hours">
+                  <option value="1h">1 Hour</option>
+                  <option value="2h">2 Hours</option>
+                  <option value="4h">4 Hours</option>
+                  <option value="6h">6 Hours</option>
+                  <option value="12h">12 Hours</option>
+                </optgroup>
+                <optgroup label="Daily">
+                  <option value="1d">1 Day</option>
+                </optgroup>
+              </select>
+            </label>
             <label>Initial Capital<input id="btInitialCapital" type="number" min="1" step="100" value="10000" /></label>
             <label>Risk<input id="btRisk" type="number" min="0.01" step="1" value="10" /></label>
-            <label>Lookback<input id="btLookback" type="number" min="1" max="365" step="1" value="30" /></label>
+            <label>Lookback (days)
+              <input id="btLookback" type="number" min="1" max="30" step="1" value="14" />
+              <small id="btLookbackHint" class="bt-field-hint"></small>
+            </label>
+            <label>Warmup bars<input id="btWarmupBars" type="number" min="0" max="500" step="10" value="50" title="Bars to skip before allowing entries (lets indicators stabilise)" /></label>
             <label>Commission bps<input id="btCommission" type="number" min="0" step="0.1" value="5" /></label>
             <label>Spread bps<input id="btSpread" type="number" min="0" step="0.1" value="0" /></label>
             <label>Slippage bps<input id="btSlippage" type="number" min="0" step="0.1" value="0" /></label>
             <label>Max Leverage<input id="btLeverage" type="number" min="1" max="100" step="1" value="1" /></label>
             <label>R:R<input id="btRiskReward" type="number" min="0.1" max="20" step="0.1" value="2" /></label>
             <label>Fill<select id="btFillModel"><option value="next_open">Next open</option><option value="close">Close</option></select></label>
-            <label>Sizing<select id="btSizing"><option value="risk_fixed">Risk fixed</option><option value="cash_fraction">Cash fraction</option><option value="fixed_qty">Fixed qty</option></select></label>
+            <label>Sizing
+              <select id="btSizing">
+                <option value="risk_fixed">Risk fixed</option>
+                <option value="cash_fraction">Cash fraction</option>
+                <option value="fixed_qty">Fixed qty</option>
+                <option value="garch_adaptive">GARCH adaptive</option>
+              </select>
+            </label>
             <label>Target<select id="btTargetMode"><option value="strategy_or_rr">Strategy / R:R fallback</option><option value="risk_reward">Force R:R</option></select></label>
             <label>Risk Mode<select id="btRiskMode"><option value="fixed_amount">Fixed $</option><option value="percent_equity">% Equity</option></select></label>
             <label>Opposite Signal<select id="btOppositeMode"><option value="ignore">Ignore</option><option value="exit_only">Exit only</option><option value="reverse">Reverse</option></select></label>
