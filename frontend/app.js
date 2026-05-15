@@ -195,6 +195,11 @@ const el = {
   saveCustomStrategyBtn: $('saveCustomStrategyBtn'),
   validateCustomStrategyBtn: $('validateCustomStrategyBtn'),
   backtestStrategySelect: $('backtestStrategySelect'),
+  btCoinSearch: $('btCoinSearch'),
+  btCoinLabel: $('btCoinLabel'),
+  btCoinDropdown: $('btCoinDropdown'),
+  btPairHidden: $('btPairHidden'),
+  btMarketHidden: $('btMarketHidden'),
   btTimeframeSelect: $('btTimeframeSelect'),
   btInitialCapital: $('btInitialCapital'),
   btRisk: $('btRisk'),
@@ -369,6 +374,9 @@ function saveDashboardPreferences() {
     strategy: normalizeStrategy(el.strategy?.value),
     timeframe: normalizeTimeframe(el.timeframe?.value),
     btTimeframe: el.btTimeframeSelect?.value || DEFAULT_TIMEFRAME,
+    btPair: el.btPairHidden?.value || '',
+    btMarket: el.btMarketHidden?.value || '',
+    btCoinLabel: el.btCoinLabel?.textContent || '',
     mode: el.mode.value,
     risk: el.risk.value,
     lookback: el.lookback.value,
@@ -439,6 +447,12 @@ async function applyDashboardPreferences() {
   if (prefs.btTimeframe && el.btTimeframeSelect) {
     setValue(el.btTimeframeSelect, prefs.btTimeframe);
     _applyLookbackConstraints(el.btTimeframeSelect.value);
+  }
+  if (prefs.btPair && el.btPairHidden) {
+    el.btPairHidden.value  = prefs.btPair;
+    if (el.btMarketHidden) el.btMarketHidden.value = prefs.btMarket || '';
+    if (el.btCoinLabel)    el.btCoinLabel.textContent = prefs.btCoinLabel || prefs.btPair;
+    if (el.btCoinSearch)   el.btCoinSearch.value = '';
   }
   setValue(el.pair2, prefs.pair2);
   setValue(el.market2, prefs.market2);
@@ -1752,8 +1766,8 @@ function backtestRequestPayload() {
   const selected = el.backtestStrategySelect?.value || `builtin:${normalizeStrategy(el.strategy?.value)}`;
   const [kind, rawId] = selected.split(':');
   return {
-    pair: el.pair.value.trim() || 'B-ETH_USDT',
-    market: el.market.value.trim() || 'ETHUSDT',
+    pair: el.btPairHidden?.value || el.pair.value.trim() || 'B-ETH_USDT',
+    market: el.btMarketHidden?.value || el.market.value.trim() || 'ETHUSDT',
     mode: el.mode.value || 'futures',
     strategy: kind === 'builtin' ? rawId : normalizeStrategy(el.strategy.value),
     custom_strategy_id: kind === 'custom' ? parseInt(rawId, 10) : null,
@@ -1979,6 +1993,97 @@ function drawBacktestEquityChart(points) {
     i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
   });
   ctx.stroke();
+}
+
+// ── Backtest coin picker ─────────────────────────────────────────────────────
+
+let _btCoinSearchTimer = null;
+
+function _btCoinSetSelection(pair, market, label) {
+  if (el.btPairHidden)   el.btPairHidden.value   = pair;
+  if (el.btMarketHidden) el.btMarketHidden.value  = market;
+  if (el.btCoinLabel)    el.btCoinLabel.textContent = label;
+  if (el.btCoinSearch)   el.btCoinSearch.value    = '';
+  _btCoinCloseDropdown();
+  saveDashboardPreferences();
+}
+
+function _btCoinCloseDropdown() {
+  if (el.btCoinDropdown) el.btCoinDropdown.hidden = true;
+}
+
+function _btCoinClear() {
+  if (el.btPairHidden)   el.btPairHidden.value   = '';
+  if (el.btMarketHidden) el.btMarketHidden.value  = '';
+  if (el.btCoinLabel)    el.btCoinLabel.textContent = '';
+  _btCoinCloseDropdown();
+  saveDashboardPreferences();
+}
+
+async function _btCoinSearch(q) {
+  if (!el.btCoinDropdown) return;
+  q = q.trim();
+  if (!q) { _btCoinCloseDropdown(); return; }
+  try {
+    const res = await fetch(`/api/markets?q=${encodeURIComponent(q)}&limit=12`);
+    if (!res.ok) throw new Error('non-ok');
+    const data = await res.json();
+    const list = Array.isArray(data) ? data : (data.markets || data.results || []);
+    el.btCoinDropdown.innerHTML = '';
+    if (!list.length) {
+      const empty = document.createElement('div');
+      empty.className = 'bt-coin-dropdown-empty';
+      empty.textContent = 'No results';
+      el.btCoinDropdown.appendChild(empty);
+    } else {
+      list.forEach(item => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        const nameEl = document.createElement('span');
+        nameEl.className = 'coin-name';
+        nameEl.textContent = item.base_currency || item.pair || '';
+        const pairEl = document.createElement('span');
+        pairEl.className = 'coin-pair';
+        pairEl.textContent = item.market || item.pair || '';
+        btn.appendChild(nameEl);
+        btn.appendChild(pairEl);
+        btn.addEventListener('mousedown', e => {
+          e.preventDefault();
+          const label = `${item.base_currency || ''} / ${item.target_currency || ''}`.replace(/^\s*\/\s*$/, '').trim();
+          _btCoinSetSelection(item.pair || '', item.market || '', label || item.market || item.pair || '');
+        });
+        el.btCoinDropdown.appendChild(btn);
+      });
+    }
+    el.btCoinDropdown.hidden = false;
+  } catch {
+    _btCoinCloseDropdown();
+  }
+}
+
+function _initBtCoinPicker() {
+  if (!el.btCoinSearch) return;
+
+  el.btCoinSearch.addEventListener('input', () => {
+    clearTimeout(_btCoinSearchTimer);
+    _btCoinSearchTimer = setTimeout(() => _btCoinSearch(el.btCoinSearch.value), 280);
+  });
+
+  el.btCoinSearch.addEventListener('focus', () => {
+    if (el.btCoinSearch.value.trim()) _btCoinSearch(el.btCoinSearch.value);
+  });
+
+  el.btCoinSearch.addEventListener('blur', () => {
+    setTimeout(_btCoinCloseDropdown, 150);
+  });
+
+  // Click on selected tag clears the selection
+  if (el.btCoinLabel) {
+    el.btCoinLabel.addEventListener('click', () => {
+      _btCoinClear();
+      el.btCoinSearch.focus();
+    });
+  }
 }
 
 // Keyed by timeframe id — holds max_lookback_days, recommended_lookback_days, group
@@ -2483,6 +2588,8 @@ function wireEvents() {
       saveDashboardPreferences();
     });
   }
+
+  _initBtCoinPicker();
 
   // Update tracked coins menu when pair changes
   el.pair.addEventListener('change', updateTrackedCoinsMenu);

@@ -305,6 +305,15 @@
           </div>
           <div class="bt-form-grid">
             <label>Strategy<select id="backtestStrategySelect"></select></label>
+            <label class="bt-wide">Coin / Pair
+              <div class="bt-coin-wrap" id="btCoinWrap">
+                <input id="btCoinSearch" type="text" autocomplete="off" spellcheck="false" placeholder="Search e.g. BTC, ETH…" />
+                <span id="btCoinLabel" class="bt-coin-tag"></span>
+                <input id="btPairHidden" type="hidden" value="" />
+                <input id="btMarketHidden" type="hidden" value="" />
+                <div id="btCoinDropdown" class="bt-coin-dropdown" hidden></div>
+              </div>
+            </label>
             <label>Timeframe
               <select id="btTimeframeSelect">
                 <optgroup label="Minutes">
@@ -910,7 +919,7 @@
   <!-- ── Toast ─────────────────────────────────────────────────────────────── -->
   <div class="toast-msg" id="toastMsg" role="status" aria-live="polite" aria-atomic="true"></div>
 
-  <script src="/app.js?v=20260514"></script>
+  <script src="/app.js?v=20260517"></script>
   <script>
     (function () {
       function pad(n) { return String(n).padStart(2, '0'); }
