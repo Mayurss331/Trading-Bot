@@ -4,6 +4,31 @@ const EXECUTION_PREF_KEY = 'coindcx-dashboard.execution-mode';
 const DASHBOARD_PREF_KEY = 'coindcx-dashboard.preferences';
 const DEFAULT_TIMEFRAME = '15m';
 const DEFAULT_STRATEGY = 'confluence';
+const DEFAULT_CUSTOM_STRATEGY_CODE = `from strategies.base import LONG, SHORT, StrategyMeta, base_frame, ema, finalize
+
+META = StrategyMeta(
+    id="ema_pullback",
+    name="EMA Pullback Strategy",
+    description="EMA trend filter with pullback entries.",
+    chart_label="EMA 21",
+    score_label="Score",
+)
+
+def analyze(bars, ctx):
+    frame = base_frame(bars)
+    frame["ema_fast"] = ema(frame["Close"], 9)
+    frame["ema_slow"] = ema(frame["Close"], 21)
+    frame["score"] = 0
+    frame.loc[frame["ema_fast"] > frame["ema_slow"], "score"] = 2
+    frame.loc[frame["ema_fast"] < frame["ema_slow"], "score"] = -2
+    frame.loc[(frame["score"] > 0) & (frame["rsi"] > 50), "entry_side"] = LONG
+    frame.loc[(frame["score"] < 0) & (frame["rsi"] < 50), "entry_side"] = SHORT
+    frame["exit_long"] = frame["ema_fast"] < frame["ema_slow"]
+    frame["exit_short"] = frame["ema_fast"] > frame["ema_slow"]
+    frame["st_line"] = frame["ema_slow"]
+    frame["reason"] = "EMA 9/21 trend alignment with RSI confirmation."
+    return finalize(META, frame, ctx)
+`;
 
 function normalizeTimeframe(value) {
   if (!value) return DEFAULT_TIMEFRAME;
@@ -42,6 +67,10 @@ const state = {
   livePositions: [],
   expertPicksInterval: null,
   reportsFilter: 'all',
+  customStrategies: [],
+  builtinBacktestStrategies: [],
+  selectedCustomStrategyId: null,
+  lastBacktestRunId: null,
 };
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -129,6 +158,7 @@ const el = {
   actDashboard:  $('actDashboard'),
   actVolScanner: $('actVolScanner'),
   actReports:    $('actReports'),
+  actBacktests:  $('actBacktests'),
   reportsSidebar: $('reportsSidebar'),
   reportsSidebarClose: $('reportsSidebarClose'),
   reportsFilterGroup: $('reportsFilterGroup'),
@@ -149,6 +179,42 @@ const el = {
   rStatDur:      $('rStatDur'),
   reportEmailInput: $('reportEmailInput'),
   btnSendReport: $('btnSendReport'),
+  backtestsSidebar: $('backtestsSidebar'),
+  backtestsSidebarClose: $('backtestsSidebarClose'),
+  backtestsRefreshBtn: $('backtestsRefreshBtn'),
+  customStrategySelect: $('customStrategySelect'),
+  customStrategyTitle: $('customStrategyTitle'),
+  customStrategySlug: $('customStrategySlug'),
+  customStrategyDescription: $('customStrategyDescription'),
+  customStrategyCode: $('customStrategyCode'),
+  customStrategyEnabled: $('customStrategyEnabled'),
+  customStrategyStatus: $('customStrategyStatus'),
+  newCustomStrategyBtn: $('newCustomStrategyBtn'),
+  saveCustomStrategyBtn: $('saveCustomStrategyBtn'),
+  validateCustomStrategyBtn: $('validateCustomStrategyBtn'),
+  backtestStrategySelect: $('backtestStrategySelect'),
+  btInitialCapital: $('btInitialCapital'),
+  btRisk: $('btRisk'),
+  btLookback: $('btLookback'),
+  btCommission: $('btCommission'),
+  btSpread: $('btSpread'),
+  btSlippage: $('btSlippage'),
+  btLeverage: $('btLeverage'),
+  btFillModel: $('btFillModel'),
+  btSizing: $('btSizing'),
+  btRiskMode: $('btRiskMode'),
+  btOppositeMode: $('btOppositeMode'),
+  btSameBarPriority: $('btSameBarPriority'),
+  btAllowShorts: $('btAllowShorts'),
+  btFinalizeOpen: $('btFinalizeOpen'),
+  runBacktestBtn: $('runBacktestBtn'),
+  backtestStatus: $('backtestStatus'),
+  backtestSummary: $('backtestSummary'),
+  backtestEquityChart: $('backtestEquityChart'),
+  backtestTradesBody: $('backtestTradesBody'),
+  backtestEvents: $('backtestEvents'),
+  btTradesCsv: $('btTradesCsv'),
+  btEquityCsv: $('btEquityCsv'),
   toastMsg:      $('toastMsg'),
 };
 
@@ -1267,6 +1333,10 @@ function toggleExpertSidebar(open) {
     el.reportsSidebar.hidden = true;
     el.actReports?.setAttribute('aria-pressed', 'false');
   }
+  if (isOpen && el.backtestsSidebar && !el.backtestsSidebar.hidden) {
+    el.backtestsSidebar.hidden = true;
+    el.actBacktests?.setAttribute('aria-pressed', 'false');
+  }
 
   el.expertSidebar.hidden = !isOpen;
 
@@ -1304,6 +1374,10 @@ function toggleVolSidebar(open) {
     el.reportsSidebar.hidden = true;
     el.actReports?.setAttribute('aria-pressed', 'false');
   }
+  if (isOpen && el.backtestsSidebar && !el.backtestsSidebar.hidden) {
+    el.backtestsSidebar.hidden = true;
+    el.actBacktests?.setAttribute('aria-pressed', 'false');
+  }
 
   el.volSidebar.hidden = !isOpen;
   el.actVolScanner?.setAttribute('aria-pressed', isOpen ? 'true' : 'false');
@@ -1329,9 +1403,45 @@ function toggleReportsSidebar(open) {
       state.expertPicksInterval = null;
     }
   }
+  if (isOpen && el.backtestsSidebar && !el.backtestsSidebar.hidden) {
+    el.backtestsSidebar.hidden = true;
+    el.actBacktests?.setAttribute('aria-pressed', 'false');
+  }
 
   el.reportsSidebar.hidden = !isOpen;
   el.actReports?.setAttribute('aria-pressed', isOpen ? 'true' : 'false');
+  el.actDashboard?.setAttribute('aria-pressed', isOpen ? 'false' : 'true');
+}
+
+// ─── Backtests sidebar ───────────────────────────────────────────────────────
+function toggleBacktestsSidebar(open) {
+  const isOpen = open ?? el.backtestsSidebar?.hidden;
+  if (!el.backtestsSidebar) return;
+
+  if (isOpen && el.volSidebar && !el.volSidebar.hidden) {
+    el.volSidebar.hidden = true;
+    el.actVolScanner?.setAttribute('aria-pressed', 'false');
+  }
+  if (isOpen && el.expertSidebar && !el.expertSidebar.hidden) {
+    el.expertSidebar.hidden = true;
+    el.actExpertPicks?.setAttribute('aria-pressed', 'false');
+    if (state.expertPicksInterval) {
+      clearInterval(state.expertPicksInterval);
+      state.expertPicksInterval = null;
+    }
+  }
+  if (isOpen && el.reportsSidebar && !el.reportsSidebar.hidden) {
+    el.reportsSidebar.hidden = true;
+    el.actReports?.setAttribute('aria-pressed', 'false');
+  }
+
+  el.backtestsSidebar.hidden = !isOpen;
+  el.actBacktests?.setAttribute('aria-pressed', isOpen ? 'true' : 'false');
+  el.actDashboard?.setAttribute('aria-pressed', isOpen ? 'false' : 'true');
+  if (isOpen) {
+    if (!el.customStrategyCode?.value) resetCustomStrategyForm();
+    loadBacktestStrategies();
+  }
 }
 
 function showToast(msg, type = 'ok') {
@@ -1447,6 +1557,313 @@ async function loadStrategies() {
   } catch (err) {
     console.error('Failed to load strategies', err);
   }
+}
+
+function setBacktestStatus(message, type = '') {
+  if (!el.backtestStatus) return;
+  el.backtestStatus.textContent = message || '—';
+  el.backtestStatus.className = `bt-status ${type ? `bt-status-${type}` : ''}`;
+}
+
+function setCustomStrategyStatus(message, type = '') {
+  if (!el.customStrategyStatus) return;
+  el.customStrategyStatus.textContent = message || '—';
+  el.customStrategyStatus.className = `bt-status ${type ? `bt-status-${type}` : ''}`;
+}
+
+function slugifyStrategyTitle(title) {
+  return String(title || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 64);
+}
+
+function resetCustomStrategyForm() {
+  state.selectedCustomStrategyId = null;
+  if (el.customStrategySelect) el.customStrategySelect.value = '';
+  if (el.customStrategyTitle) el.customStrategyTitle.value = '';
+  if (el.customStrategySlug) el.customStrategySlug.value = '';
+  if (el.customStrategyDescription) el.customStrategyDescription.value = '';
+  if (el.customStrategyCode) el.customStrategyCode.value = DEFAULT_CUSTOM_STRATEGY_CODE;
+  if (el.customStrategyEnabled) el.customStrategyEnabled.checked = true;
+  setCustomStrategyStatus('New strategy', '');
+}
+
+function populateCustomStrategySelect() {
+  if (!el.customStrategySelect) return;
+  const options = ['<option value="">New custom strategy</option>'].concat(
+    state.customStrategies.map(s => `<option value="${s.id}">${escapeHtml(s.title || s.slug)} · v${s.version || 1}</option>`)
+  );
+  el.customStrategySelect.innerHTML = options.join('');
+  if (state.selectedCustomStrategyId) el.customStrategySelect.value = String(state.selectedCustomStrategyId);
+}
+
+function populateBacktestStrategySelect() {
+  if (!el.backtestStrategySelect) return;
+  const builtins = state.builtinBacktestStrategies
+    .map(s => `<option value="builtin:${s.id}">${escapeHtml(s.name || s.id)}</option>`);
+  const custom = state.customStrategies
+    .filter(s => s.enabled)
+    .map(s => `<option value="custom:${s.id}">${escapeHtml(s.title || s.slug)} · v${s.version || 1}</option>`);
+  el.backtestStrategySelect.innerHTML = [
+    '<optgroup label="Built in">',
+    ...builtins,
+    '</optgroup>',
+    '<optgroup label="Custom">',
+    ...custom,
+    '</optgroup>',
+  ].join('');
+  if (!el.backtestStrategySelect.value && state.builtinBacktestStrategies.length) {
+    el.backtestStrategySelect.value = `builtin:${DEFAULT_STRATEGY}`;
+  }
+}
+
+function renderCustomStrategyForm(strategy) {
+  if (!strategy) {
+    resetCustomStrategyForm();
+    return;
+  }
+  state.selectedCustomStrategyId = strategy.id;
+  if (el.customStrategySelect) el.customStrategySelect.value = String(strategy.id);
+  if (el.customStrategyTitle) el.customStrategyTitle.value = strategy.title || '';
+  if (el.customStrategySlug) el.customStrategySlug.value = strategy.slug || '';
+  if (el.customStrategyDescription) el.customStrategyDescription.value = strategy.description || '';
+  if (el.customStrategyCode) el.customStrategyCode.value = strategy.code || '';
+  if (el.customStrategyEnabled) el.customStrategyEnabled.checked = Boolean(strategy.enabled);
+  const status = strategy.validation_status || 'not validated';
+  setCustomStrategyStatus(`${status}${strategy.validation_message ? ': ' + strategy.validation_message : ''}`, status === 'valid' ? 'ok' : status === 'invalid' ? 'err' : '');
+}
+
+async function loadBacktestStrategies() {
+  if (!el.backtestsSidebar) return;
+  try {
+    const res = await fetch('/api/backtests/strategies');
+    const data = await res.json();
+    if (!data.ok) return;
+    state.builtinBacktestStrategies = data.builtins || [];
+    state.customStrategies = data.custom || [];
+    populateCustomStrategySelect();
+    populateBacktestStrategySelect();
+    if (!state.selectedCustomStrategyId && state.customStrategies.length) {
+      const first = state.customStrategies[0];
+      await loadCustomStrategy(first.id);
+    } else if (!state.customStrategies.length && !el.customStrategyCode?.value) {
+      resetCustomStrategyForm();
+    }
+  } catch (err) {
+    console.error('Backtest strategy load failed', err);
+  }
+}
+
+async function loadCustomStrategy(id) {
+  if (!id) {
+    resetCustomStrategyForm();
+    return;
+  }
+  try {
+    const res = await fetch(`/api/backtests/custom-strategies/${id}`);
+    const data = await res.json();
+    if (!data.ok) {
+      setCustomStrategyStatus(data.message || 'Could not load strategy.', 'err');
+      return;
+    }
+    renderCustomStrategyForm(data.strategy);
+  } catch (err) {
+    setCustomStrategyStatus('Network error while loading strategy.', 'err');
+  }
+}
+
+async function saveCustomStrategy() {
+  const payload = {
+    title: el.customStrategyTitle?.value?.trim() || '',
+    slug: el.customStrategySlug?.value?.trim() || '',
+    description: el.customStrategyDescription?.value?.trim() || '',
+    code: el.customStrategyCode?.value || '',
+    enabled: Boolean(el.customStrategyEnabled?.checked),
+  };
+  if (!payload.title) {
+    setCustomStrategyStatus('Title is required.', 'err');
+    return;
+  }
+  if (!payload.slug) payload.slug = slugifyStrategyTitle(payload.title);
+  if (el.customStrategySlug) el.customStrategySlug.value = payload.slug;
+  const id = state.selectedCustomStrategyId;
+  const btn = el.saveCustomStrategyBtn;
+  if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+  setCustomStrategyStatus('Saving...', '');
+  try {
+    const res = await fetch(id ? `/api/backtests/custom-strategies/${id}` : '/api/backtests/custom-strategies', {
+      method: id ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      setCustomStrategyStatus(data.message || 'Saved with validation errors.', data.strategy ? 'err' : 'err');
+      if (!data.strategy) return;
+    }
+    renderCustomStrategyForm(data.strategy);
+    await loadBacktestStrategies();
+    setCustomStrategyStatus(data.message || 'Saved.', data.ok ? 'ok' : 'err');
+  } catch (err) {
+    setCustomStrategyStatus('Network error while saving.', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Save'; }
+  }
+}
+
+async function validateCustomStrategyCurrent() {
+  if (!state.selectedCustomStrategyId) {
+    await saveCustomStrategy();
+    return;
+  }
+  const btn = el.validateCustomStrategyBtn;
+  if (btn) { btn.disabled = true; btn.textContent = 'Validating...'; }
+  try {
+    const res = await fetch(`/api/backtests/custom-strategies/${state.selectedCustomStrategyId}/validate`, { method: 'POST' });
+    const data = await res.json();
+    setCustomStrategyStatus(data.message || (data.ok ? 'Valid.' : 'Invalid.'), data.ok ? 'ok' : 'err');
+    await loadBacktestStrategies();
+  } catch (err) {
+    setCustomStrategyStatus('Network error while validating.', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Validate'; }
+  }
+}
+
+function backtestRequestPayload() {
+  const selected = el.backtestStrategySelect?.value || `builtin:${normalizeStrategy(el.strategy?.value)}`;
+  const [kind, rawId] = selected.split(':');
+  return {
+    pair: el.pair.value.trim() || 'B-ETH_USDT',
+    market: el.market.value.trim() || 'ETHUSDT',
+    mode: el.mode.value || 'futures',
+    strategy: kind === 'builtin' ? rawId : normalizeStrategy(el.strategy.value),
+    custom_strategy_id: kind === 'custom' ? parseInt(rawId, 10) : null,
+    timeframe: normalizeTimeframe(el.timeframe?.value),
+    lookback_days: parseInt(el.btLookback?.value || el.lookback?.value || '30', 10),
+    initial_capital: parseFloat(el.btInitialCapital?.value || '10000'),
+    risk: parseFloat(el.btRisk?.value || el.risk?.value || '10'),
+    commission_bps: parseFloat(el.btCommission?.value || '0'),
+    spread_bps: parseFloat(el.btSpread?.value || '0'),
+    slippage_bps: parseFloat(el.btSlippage?.value || '0'),
+    leverage: parseFloat(el.btLeverage?.value || '1'),
+    allow_shorts: Boolean(el.btAllowShorts?.checked),
+    fill_model: el.btFillModel?.value || 'next_open',
+    position_sizing: el.btSizing?.value || 'risk_fixed',
+    risk_mode: el.btRiskMode?.value || 'fixed_amount',
+    opposite_signal_mode: el.btOppositeMode?.value || 'ignore',
+    same_bar_priority: el.btSameBarPriority?.value || 'stop_first',
+    finalize_open_trade: Boolean(el.btFinalizeOpen?.checked),
+  };
+}
+
+async function runBacktest() {
+  const btn = el.runBacktestBtn;
+  if (btn) { btn.disabled = true; btn.textContent = 'Running...'; }
+  setBacktestStatus('Running...', '');
+  try {
+    const res = await fetch('/api/backtests/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(backtestRequestPayload()),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      setBacktestStatus(data.message || 'Backtest failed.', 'err');
+      return;
+    }
+    renderBacktestResult(data);
+    setBacktestStatus(`Run #${data.run_id}`, 'ok');
+  } catch (err) {
+    setBacktestStatus('Network error while running backtest.', 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Run Backtest'; }
+  }
+}
+
+function renderBacktestResult(data) {
+  state.lastBacktestRunId = data.run_id;
+  const s = data.summary || {};
+  if (el.backtestSummary) {
+    const cells = [
+      ['Final', s.final_equity != null ? '$' + fmtReportNum(s.final_equity, 2) : '—'],
+      ['Return', s.total_return_pct != null ? fmtPct(s.total_return_pct) : '—'],
+      ['Max DD', s.max_drawdown_pct != null ? fmtPct(s.max_drawdown_pct) : '—'],
+      ['Sharpe', s.sharpe ?? '—'],
+      ['Win Rate', s.win_rate_pct != null ? fmtPct(s.win_rate_pct) : '—'],
+      ['Trades', s.trades ?? '—'],
+      ['Skipped', s.skipped_signals ?? 0],
+    ];
+    el.backtestSummary.innerHTML = cells.map(([k, v]) => `<div class="bt-stat"><span>${k}</span><strong>${v}</strong></div>`).join('');
+  }
+  if (el.backtestTradesBody) {
+    const trades = data.trades || [];
+    el.backtestTradesBody.innerHTML = trades.length ? trades.slice().reverse().map((t, i) => {
+      const pnl = parseFloat(t.net_pnl || 0);
+      return `<tr>
+        <td>${trades.length - i}</td>
+        <td class="${t.side === 'LONG' ? 'bull' : 'bear'}">${t.side || '—'}</td>
+        <td>${fmtTs(t.entry_ts)}</td>
+        <td>${fmtTs(t.exit_ts)}</td>
+        <td class="mono">${fmtReportNum(t.qty, 8)}</td>
+        <td class="${pnl >= 0 ? 'bull' : 'bear'} mono">${pnl >= 0 ? '+' : ''}${fmtReportNum(pnl, 4)}</td>
+        <td>${escapeHtml(t.exit_reason || '—')}${t.leverage_used ? ` · ${parseFloat(t.leverage_used).toFixed(2)}x` : ''}</td>
+      </tr>`;
+    }).join('') : '<tr><td colspan="7" class="empty-row">No trades generated.</td></tr>';
+  }
+  if (el.backtestEvents) {
+    const events = data.events || [];
+    el.backtestEvents.innerHTML = events.slice().reverse().slice(0, 25).map(e => `<div>${escapeHtml(e)}</div>`).join('');
+  }
+  if (el.btTradesCsv) {
+    el.btTradesCsv.hidden = false;
+    el.btTradesCsv.href = `/api/backtests/${data.run_id}/trades.csv`;
+  }
+  if (el.btEquityCsv) {
+    el.btEquityCsv.hidden = false;
+    el.btEquityCsv.href = `/api/backtests/${data.run_id}/equity.csv`;
+  }
+  drawBacktestEquityChart(data.equity || []);
+}
+
+function drawBacktestEquityChart(points) {
+  const canvas = el.backtestEquityChart;
+  if (!canvas) return;
+  const rect = canvas.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+  canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  ctx.clearRect(0, 0, W, H);
+  ctx.fillStyle = cssVar('--surface-2') || '#10172a';
+  ctx.fillRect(0, 0, W, H);
+  if (!points.length) return;
+  const vals = points.map(p => parseFloat(p.equity)).filter(Number.isFinite);
+  if (vals.length < 2) return;
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = Math.max(max - min, Math.abs(max) * 0.001, 1);
+  const pad = 14;
+  ctx.strokeStyle = cssVar('--border-3') || '#233248';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad, H - pad);
+  ctx.lineTo(W - pad, H - pad);
+  ctx.stroke();
+  ctx.strokeStyle = cssVar('--bull') || '#00c896';
+  ctx.lineWidth = 1.8;
+  ctx.beginPath();
+  vals.forEach((v, i) => {
+    const x = pad + (i / (vals.length - 1)) * (W - pad * 2);
+    const y = pad + ((max - v) / span) * (H - pad * 2);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
+  ctx.stroke();
 }
 
 async function loadTimeframes() {
@@ -1764,6 +2181,13 @@ function wireEvents() {
       if (el.expertSidebar && !el.expertSidebar.hidden) {
         toggleExpertSidebar(false);
       }
+      if (el.reportsSidebar && !el.reportsSidebar.hidden) {
+        toggleReportsSidebar(false);
+      }
+      if (el.backtestsSidebar && !el.backtestsSidebar.hidden) {
+        toggleBacktestsSidebar(false);
+      }
+      el.actDashboard?.setAttribute('aria-pressed', 'true');
     });
   }
   if (el.volSidebarClose) {
@@ -1783,6 +2207,37 @@ function wireEvents() {
   }
   if (el.reportsSidebarClose) {
     el.reportsSidebarClose.addEventListener('click', () => toggleReportsSidebar(false));
+  }
+  if (el.actBacktests) {
+    el.actBacktests.addEventListener('click', () => toggleBacktestsSidebar(true));
+  }
+  if (el.backtestsSidebarClose) {
+    el.backtestsSidebarClose.addEventListener('click', () => toggleBacktestsSidebar(false));
+  }
+  if (el.backtestsRefreshBtn) {
+    el.backtestsRefreshBtn.addEventListener('click', () => loadBacktestStrategies());
+  }
+  if (el.customStrategySelect) {
+    el.customStrategySelect.addEventListener('change', () => loadCustomStrategy(el.customStrategySelect.value));
+  }
+  if (el.customStrategyTitle) {
+    el.customStrategyTitle.addEventListener('input', () => {
+      if (!state.selectedCustomStrategyId && el.customStrategySlug && !el.customStrategySlug.value) {
+        el.customStrategySlug.value = slugifyStrategyTitle(el.customStrategyTitle.value);
+      }
+    });
+  }
+  if (el.newCustomStrategyBtn) {
+    el.newCustomStrategyBtn.addEventListener('click', resetCustomStrategyForm);
+  }
+  if (el.saveCustomStrategyBtn) {
+    el.saveCustomStrategyBtn.addEventListener('click', saveCustomStrategy);
+  }
+  if (el.validateCustomStrategyBtn) {
+    el.validateCustomStrategyBtn.addEventListener('click', validateCustomStrategyCurrent);
+  }
+  if (el.runBacktestBtn) {
+    el.runBacktestBtn.addEventListener('click', runBacktest);
   }
   if (el.reportsRefreshBtn) {
     el.reportsRefreshBtn.addEventListener('click', () => loadReports());

@@ -25,7 +25,11 @@ async def get_db() -> AsyncSession:
 async def init_db() -> None:
     from .models import (  # noqa: F401
         AccountSnapshot,
+        BacktestEquityPoint,
+        BacktestRun,
+        BacktestTrade,
         Candle,
+        CustomStrategy,
         PositionSnapshot,
         SignalEvent,
         StateSnapshot,

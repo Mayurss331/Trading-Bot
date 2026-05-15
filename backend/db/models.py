@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, JSON, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
 
 from .database import Base
 
@@ -112,3 +112,74 @@ class PositionSnapshot(Base):
     margin = Column(Float, nullable=True)
     leverage = Column(Float, nullable=True)
     payload = Column(JSON, nullable=False)
+
+
+class CustomStrategy(Base):
+    __tablename__ = "custom_strategies"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String, nullable=False)
+    slug = Column(String, nullable=False, unique=True, index=True)
+    description = Column(Text, nullable=True)
+    code = Column(Text, nullable=False)
+    version = Column(Integer, nullable=False, default=1)
+    enabled = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    last_validated_at = Column(DateTime, nullable=True)
+    validation_status = Column(String, nullable=True)
+    validation_message = Column(Text, nullable=True)
+
+
+class BacktestRun(Base):
+    __tablename__ = "backtest_runs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    pair = Column(String, nullable=False, index=True)
+    market = Column(String, nullable=True)
+    mode = Column(String, nullable=False)
+    timeframe = Column(String, nullable=False)
+    strategy = Column(String, nullable=True, index=True)
+    custom_strategy_id = Column(Integer, ForeignKey("custom_strategies.id"), nullable=True, index=True)
+    custom_strategy_title = Column(String, nullable=True)
+    custom_strategy_version = Column(Integer, nullable=True)
+    custom_strategy_code_snapshot = Column(Text, nullable=True)
+    data_source = Column(String, nullable=True)
+    start_ts = Column(DateTime, nullable=True)
+    end_ts = Column(DateTime, nullable=True)
+    bars_count = Column(Integer, nullable=False, default=0)
+    config = Column(JSON, nullable=False)
+    summary = Column(JSON, nullable=False)
+
+
+class BacktestTrade(Base):
+    __tablename__ = "backtest_trades"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey("backtest_runs.id"), nullable=False, index=True)
+    side = Column(String, nullable=False)
+    entry_ts = Column(DateTime, nullable=False)
+    exit_ts = Column(DateTime, nullable=True)
+    entry_px = Column(Float, nullable=False)
+    exit_px = Column(Float, nullable=True)
+    qty = Column(Float, nullable=False)
+    gross_pnl = Column(Float, nullable=False, default=0.0)
+    fees = Column(Float, nullable=False, default=0.0)
+    net_pnl = Column(Float, nullable=False, default=0.0)
+    return_pct = Column(Float, nullable=True)
+    r_multiple = Column(Float, nullable=True)
+    exit_reason = Column(String, nullable=True)
+    payload = Column(JSON, nullable=False)
+
+
+class BacktestEquityPoint(Base):
+    __tablename__ = "backtest_equity_points"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    run_id = Column(Integer, ForeignKey("backtest_runs.id"), nullable=False, index=True)
+    ts = Column(DateTime, nullable=False, index=True)
+    equity = Column(Float, nullable=False)
+    cash = Column(Float, nullable=False)
+    position_value = Column(Float, nullable=False, default=0.0)
+    drawdown_pct = Column(Float, nullable=False, default=0.0)

@@ -72,6 +72,7 @@ from backend.routers.history import router as history_router  # noqa: E402
 from backend.routers.volatility_scanner import router as volatility_scanner_router  # noqa: E402
 from backend.routers.expert_picks import router as expert_picks_router  # noqa: E402
 from backend.routers.reports import router as reports_router, dispatch_report, _parse_emails  # noqa: E402
+from backend.routers.backtests import router as backtests_router  # noqa: E402
 
 scheduler = AsyncIOScheduler()
 
@@ -150,6 +151,7 @@ app.include_router(history_router)
 app.include_router(volatility_scanner_router)
 app.include_router(expert_picks_router)
 app.include_router(reports_router)
+app.include_router(backtests_router)
 
 # Serve the frontend last (catch-all)
 app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")

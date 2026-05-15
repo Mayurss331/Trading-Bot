@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+from datetime import date, datetime
 
 import numpy as np
 import pandas as pd
@@ -35,6 +36,8 @@ def clean(value: object) -> object:
     """Recursively replace pandas/numpy types with JSON-serialisable equivalents."""
     if value is None:
         return None
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
     if isinstance(value, pd.Timestamp):
         return value.isoformat()
     if isinstance(value, np.integer):
