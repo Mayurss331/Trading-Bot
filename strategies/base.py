@@ -62,6 +62,10 @@ def rsi_s(s: pd.Series, n: int = 14) -> pd.Series:
     return 100 - 100 / (1 + g / l.replace(0, np.nan))
 
 
+def rsi(s: pd.Series, n: int = 14) -> pd.Series:
+    return rsi_s(s, n)
+
+
 def atr_s(df: pd.DataFrame, n: int = 14) -> pd.Series:
     tr = pd.concat(
         [
@@ -72,6 +76,63 @@ def atr_s(df: pd.DataFrame, n: int = 14) -> pd.Series:
         axis=1,
     ).max(axis=1)
     return tr.ewm(span=n, adjust=False).mean()
+
+
+def atr(
+    high_or_df: pd.DataFrame | pd.Series,
+    low: pd.Series | None = None,
+    close: pd.Series | None = None,
+    n: int = 14,
+) -> pd.Series:
+    if isinstance(high_or_df, pd.DataFrame):
+        return atr_s(high_or_df, n)
+    if low is None or close is None:
+        raise TypeError("atr expects either atr(df, n=14) or atr(high, low, close, n=14).")
+    tr = pd.concat(
+        [
+            high_or_df - low,
+            (high_or_df - close.shift(1)).abs(),
+            (low - close.shift(1)).abs(),
+        ],
+        axis=1,
+    ).max(axis=1)
+    return tr.ewm(span=n, adjust=False).mean()
+
+
+def vwap(df: pd.DataFrame) -> pd.Series:
+    typical = (df["High"] + df["Low"] + df["Close"]) / 3
+    volume = df["Volume"].replace(0, np.nan)
+    return (typical * volume).cumsum() / volume.cumsum()
+
+
+def rolling_vwap(df: pd.DataFrame, n: int = 20) -> pd.Series:
+    typical = (df["High"] + df["Low"] + df["Close"]) / 3
+    volume = df["Volume"].replace(0, np.nan)
+    return (typical * volume).rolling(n).sum() / volume.rolling(n).sum()
+
+
+def crossed_above(a: pd.Series, b: pd.Series | float) -> pd.Series:
+    other = b if isinstance(b, pd.Series) else pd.Series(b, index=a.index)
+    return (a > other) & (a.shift(1) <= other.shift(1))
+
+
+def crossed_below(a: pd.Series, b: pd.Series | float) -> pd.Series:
+    other = b if isinstance(b, pd.Series) else pd.Series(b, index=a.index)
+    return (a < other) & (a.shift(1) >= other.shift(1))
+
+
+def highest(s: pd.Series, n: int) -> pd.Series:
+    return s.rolling(n).max()
+
+
+def lowest(s: pd.Series, n: int) -> pd.Series:
+    return s.rolling(n).min()
+
+
+def zscore(s: pd.Series, n: int = 20) -> pd.Series:
+    mean = s.rolling(n).mean()
+    std = s.rolling(n).std().replace(0, np.nan)
+    return (s - mean) / std
 
 
 def supertrend(df: pd.DataFrame, n: int = 10, mult: float = 3.5) -> tuple[pd.Series, pd.Series]:
@@ -114,6 +175,16 @@ def macd_hist(close: pd.Series) -> pd.Series:
     line = ema(close, 12) - ema(close, 26)
     signal = ema(line, 9)
     return line - signal
+
+
+def macd(close: pd.Series) -> tuple[pd.Series, pd.Series, pd.Series]:
+    line = ema(close, 12) - ema(close, 26)
+    signal = ema(line, 9)
+    return line, signal, line - signal
+
+
+def typical_price(df: pd.DataFrame) -> pd.Series:
+    return (df["High"] + df["Low"] + df["Close"]) / 3
 
 
 def base_frame(bars: pd.DataFrame) -> pd.DataFrame:
