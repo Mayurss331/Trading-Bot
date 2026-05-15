@@ -1,10 +1,19 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+try:
+    from numba import njit as _njit
+    _NUMBA_AVAILABLE = True
+except ImportError:
+    _NUMBA_AVAILABLE = False
+    def _njit(fn):  # no-op fallback
+        return fn
 
 
 LONG = 1
@@ -135,33 +144,34 @@ def zscore(s: pd.Series, n: int = 20) -> pd.Series:
     return (s - mean) / std
 
 
+@_njit
+def _supertrend_core(close: np.ndarray, bu_b: np.ndarray, bl_b: np.ndarray) -> np.ndarray:
+    """GARCH-style state loop — JIT-compiled via Numba when available."""
+    n = len(close)
+    bu = bu_b.copy()
+    bl = bl_b.copy()
+    st = np.full(n, np.nan)
+    for i in range(1, n):
+        bu[i] = bu_b[i] if bu_b[i] < bu[i - 1] or close[i - 1] > bu[i - 1] else bu[i - 1]
+        bl[i] = bl_b[i] if bl_b[i] > bl[i - 1] or close[i - 1] < bl[i - 1] else bl[i - 1]
+        prev = st[i - 1]
+        if math.isnan(prev):
+            st[i] = bl[i]
+        elif prev == bu[i - 1]:
+            st[i] = bl[i] if close[i] > bu[i] else bu[i]
+        else:
+            st[i] = bu[i] if close[i] < bl[i] else bl[i]
+    return st
+
+
 def supertrend(df: pd.DataFrame, n: int = 10, mult: float = 3.5) -> tuple[pd.Series, pd.Series]:
     mid = (df["High"] + df["Low"]) / 2
     _atr = atr_s(df, n)
-    bu_b = mid + mult * _atr
-    bl_b = mid - mult * _atr
-    bu = bu_b.copy()
-    bl = bl_b.copy()
-    st = pd.Series(np.nan, index=df.index)
-
-    for i in range(1, len(df)):
-        bu.iloc[i] = (
-            bu_b.iloc[i]
-            if bu_b.iloc[i] < bu.iloc[i - 1] or df["Close"].iloc[i - 1] > bu.iloc[i - 1]
-            else bu.iloc[i - 1]
-        )
-        bl.iloc[i] = (
-            bl_b.iloc[i]
-            if bl_b.iloc[i] > bl.iloc[i - 1] or df["Close"].iloc[i - 1] < bl.iloc[i - 1]
-            else bl.iloc[i - 1]
-        )
-        prev = st.iloc[i - 1]
-        if pd.isna(prev):
-            st.iloc[i] = bl.iloc[i]
-        elif prev == bu.iloc[i - 1]:
-            st.iloc[i] = bl.iloc[i] if df["Close"].iloc[i] > bu.iloc[i] else bu.iloc[i]
-        else:
-            st.iloc[i] = bu.iloc[i] if df["Close"].iloc[i] < bl.iloc[i] else bl.iloc[i]
+    bu_b = (mid + mult * _atr).values.astype(np.float64)
+    bl_b = (mid - mult * _atr).values.astype(np.float64)
+    close = df["Close"].values.astype(np.float64)
+    st_arr = _supertrend_core(close, bu_b, bl_b)
+    st = pd.Series(st_arr, index=df.index)
     return (df["Close"] > st).astype(int), st
 
 
@@ -310,7 +320,12 @@ def exit_trade(state: PaperState, ts: pd.Timestamp, exit_px: float, reason: str,
     return msg
 
 
-def replay_strategy(frame: pd.DataFrame, ctx: StrategyContext, max_rows: int = 300) -> tuple[PaperState, list[str]]:
+def replay_strategy(
+    frame: pd.DataFrame,
+    ctx: StrategyContext,
+    max_rows: int = 300,
+    same_bar_priority: str = "stop_first",
+) -> tuple[PaperState, list[str]]:
     state = PaperState()
     events: list[str] = []
     replay = frame.dropna(subset=["Close"]).tail(max_rows)
@@ -336,7 +351,15 @@ def replay_strategy(frame: pd.DataFrame, ctx: StrategyContext, max_rows: int = 3
                 if next_stop > state.stop_px + 1e-9:
                     state.stop_px = next_stop
                     events.append(f"[{fmt_ts(ts)}] TRAIL LONG SL -> {state.stop_px:,.4f}")
-            if low <= state.stop_px:
+            stop_hit = low <= state.stop_px
+            target_hit = high >= state.target_px
+            if stop_hit and target_hit:
+                # Both hit same bar — use configured priority
+                if same_bar_priority == "target_first":
+                    events.append(exit_trade(state, ts, state.target_px, "TARGET_SAME_BAR", ctx))
+                else:
+                    events.append(exit_trade(state, ts, state.stop_px, "STOP_SAME_BAR", ctx))
+            elif stop_hit:
                 events.append(exit_trade(state, ts, state.stop_px, "STOP", ctx))
             elif np.isfinite(state.tp1_px) and np.isfinite(state.tp1_frac) and state.tp1_frac > 0 and high >= state.tp1_px:
                 qty_exit = (state.qty_open if np.isfinite(state.qty_open) else state.qty) * float(state.tp1_frac)
@@ -353,7 +376,7 @@ def replay_strategy(frame: pd.DataFrame, ctx: StrategyContext, max_rows: int = 3
                         f"PnL=${pnl:,.2f} ({r_mult:+.2f}R) | Cumulative=${state.realized_pnl:,.2f}"
                     )
                     state.tp1_px = np.nan
-            elif high >= state.target_px:
+            elif target_hit:
                 events.append(exit_trade(state, ts, state.target_px, "TARGET", ctx))
             elif bool(row.get("exit_long", False)):
                 events.append(exit_trade(state, ts, close, "SIGNAL", ctx))
@@ -364,7 +387,14 @@ def replay_strategy(frame: pd.DataFrame, ctx: StrategyContext, max_rows: int = 3
                 if next_stop < state.stop_px - 1e-9:
                     state.stop_px = next_stop
                     events.append(f"[{fmt_ts(ts)}] TRAIL SHORT SL -> {state.stop_px:,.4f}")
-            if high >= state.stop_px:
+            stop_hit = high >= state.stop_px
+            target_hit = low <= state.target_px
+            if stop_hit and target_hit:
+                if same_bar_priority == "target_first":
+                    events.append(exit_trade(state, ts, state.target_px, "TARGET_SAME_BAR", ctx))
+                else:
+                    events.append(exit_trade(state, ts, state.stop_px, "STOP_SAME_BAR", ctx))
+            elif stop_hit:
                 events.append(exit_trade(state, ts, state.stop_px, "STOP", ctx))
             elif np.isfinite(state.tp1_px) and np.isfinite(state.tp1_frac) and state.tp1_frac > 0 and low <= state.tp1_px:
                 qty_exit = (state.qty_open if np.isfinite(state.qty_open) else state.qty) * float(state.tp1_frac)
@@ -381,7 +411,7 @@ def replay_strategy(frame: pd.DataFrame, ctx: StrategyContext, max_rows: int = 3
                         f"PnL=${pnl:,.2f} ({r_mult:+.2f}R) | Cumulative=${state.realized_pnl:,.2f}"
                     )
                     state.tp1_px = np.nan
-            elif low <= state.target_px:
+            elif target_hit:
                 events.append(exit_trade(state, ts, state.target_px, "TARGET", ctx))
             elif bool(row.get("exit_short", False)):
                 events.append(exit_trade(state, ts, close, "SIGNAL", ctx))

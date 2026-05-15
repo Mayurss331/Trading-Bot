@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
+from datetime import time as _Time
 from typing import Any, Callable
 
 import numpy as np
@@ -148,6 +150,21 @@ def _json_value(value: object) -> object:
     return str(value)[:500]
 
 
+def _compute_garch_vol_series(
+    close: pd.Series, omega: float, alpha: float, beta: float
+) -> pd.Series:
+    """Rolling GARCH(1,1) annualised-vol estimate per bar (used for adaptive sizing)."""
+    rets = close.pct_change().fillna(0.0).values.astype(np.float64)
+    n = len(rets)
+    vols = np.empty(n, dtype=np.float64)
+    init_n = min(50, n)
+    var = float(np.var(rets[1:init_n]) or 1e-10)
+    for i, r in enumerate(rets):
+        var = omega + alpha * r * r + beta * var
+        vols[i] = math.sqrt(max(var, 1e-16))
+    return pd.Series(vols, index=close.index)
+
+
 def _float_or_nan(value: object) -> float:
     try:
         out = float(value)
@@ -257,10 +274,23 @@ def _risk_amount(equity: float, cfg: BacktestConfig) -> float:
     return max(float(cfg.risk or 0.0), 0.0)
 
 
-def _size_position(entry_px: float, stop_px: float, equity: float, cfg: BacktestConfig) -> tuple[float, float, float]:
+def _size_position(
+    entry_px: float,
+    stop_px: float,
+    equity: float,
+    cfg: BacktestConfig,
+    garch_vol: float | None = None,
+) -> tuple[float, float, float]:
     risk_unit = risk_per_unit(entry_px, stop_px)
+    if cfg.position_sizing == "garch_adaptive":
+        # Scale effective risk-per-unit by GARCH volatility → smaller size in high-vol regimes
+        garch_risk = max(garch_vol * entry_px, risk_unit) if (garch_vol and garch_vol > 0) else risk_unit
+        risk_amount = _risk_amount(equity, cfg)
+        qty = max(risk_amount / garch_risk, 0.0)
+        return qty, garch_risk, risk_amount
     if cfg.position_sizing == "cash_fraction":
-        notional = min(equity * cfg.leverage, equity * max(0.001, min(cfg.risk / 100, 1.0)) * cfg.leverage)
+        frac = max(0.001, min(cfg.risk / 100, 1.0))
+        notional = equity * frac * cfg.leverage
         qty = max(notional / entry_px, 0.0)
         return qty, risk_unit, qty * risk_unit
     if cfg.position_sizing == "fixed_qty":
@@ -303,6 +333,22 @@ def run_backtest(
     data = data.dropna(subset=["Open", "High", "Low", "Close"]).copy()
     if data.empty:
         return {"ok": False, "message": "No valid OHLCV bars available for backtest."}
+
+    # Pre-compute GARCH vol series for adaptive sizing
+    garch_vol_series: pd.Series | None = None
+    if cfg.position_sizing == "garch_adaptive":
+        garch_vol_series = _compute_garch_vol_series(
+            data["Close"], cfg.garch_omega, cfg.garch_alpha, cfg.garch_beta
+        )
+
+    # Parse EOD exit time once
+    _eod_time: _Time | None = None
+    if cfg.eod_exit:
+        try:
+            _h, _m = cfg.eod_exit_time.split(":")
+            _eod_time = _Time(int(_h), int(_m))
+        except Exception:
+            pass
 
     cash = float(cfg.initial_capital)
     pos = OpenPosition()
@@ -417,6 +463,11 @@ def run_backtest(
             add_skip(ts, side, "no_equity", f"Equity={equity:,.2f}; no capital available.")
             return
         entry_px = _effective_price(float(raw_px), side, "entry", cfg)
+        # Resolve GARCH vol for current bar
+        garch_vol: float | None = None
+        if garch_vol_series is not None:
+            _gv = garch_vol_series.get(ts)
+            garch_vol = float(_gv) if _gv is not None and np.isfinite(_gv) else None
         stop_hint = _float_or_nan(row.get("stop_px", np.nan))
         target_hint = _float_or_nan(row.get("tp2_px", row.get("target_px", np.nan)))
         stop_valid = (
@@ -439,7 +490,7 @@ def run_backtest(
             stop_anchor = stop_hint if np.isfinite(stop_hint) else _float_or_nan(row.get("st_line", np.nan))
             stop_px, _target_px, init_risk = derive_brackets(side, entry_px, stop_anchor, _float_or_nan(row.get("atr", np.nan)))
             target_px = _choose_target(side, entry_px, stop_px, target_hint, cfg)
-        qty, init_risk, risk_amount = _size_position(entry_px, stop_px, equity, cfg)
+        qty, init_risk, risk_amount = _size_position(entry_px, stop_px, equity, cfg, garch_vol)
         if qty <= 0:
             add_skip(ts, side, "no_qty", "Calculated quantity is zero.")
             return
@@ -632,7 +683,9 @@ def run_backtest(
                 if reverse_side == SHORT and not cfg.allow_shorts:
                     add_skip(ts, reverse_side, "shorts_disabled", f"SHORT ignored in {cfg.mode.upper()} mode.")
                 else:
-                    open_position(ts, raw_open, reverse_side, pending_reverse["row"], cash)
+                    # Re-compute equity after close so position sizing uses fresh capital
+                    rev_equity = mark_equity(ts, raw_close)
+                    open_position(ts, raw_open, reverse_side, pending_reverse["row"], rev_equity)
                 pending_reverse = None
                 pending_entry = None
             if pending_entry and pos.side == FLAT and not closed_this_bar:
@@ -677,7 +730,19 @@ def run_backtest(
             if pos.side != FLAT:
                 update_trailing_stop(ts, row)
 
+        # EOD forced square-off
+        if _eod_time is not None and pos.side != FLAT and not closed_this_bar:
+            bar_time = ts.time() if hasattr(ts, "time") else None
+            if bar_time is not None and bar_time >= _eod_time:
+                if cfg.fill_model == "close":
+                    close_position(ts, raw_close, "EOD")
+                else:
+                    pending_exit = "EOD"
+
         if pos.side == FLAT and not pending_exit and not closed_this_bar:
+            if i < cfg.warmup_bars:
+                mark_equity(ts, raw_close)
+                continue
             side = int(row.get("entry_side", 0) or 0)
             if side in (LONG, SHORT):
                 if cfg.fill_model == "close":
@@ -706,7 +771,7 @@ def run_backtest(
     median_delta = data.index.to_series().diff().median()
     bar_minutes = median_delta.total_seconds() / 60 if isinstance(median_delta, pd.Timedelta) and median_delta.total_seconds() > 0 else 15
     bars_per_year = (365.25 * 24 * 60) / bar_minutes
-    summary = compute_summary(equity, trades, cfg.initial_capital, bars_per_year)
+    summary = compute_summary(equity, trades, cfg.initial_capital, bars_per_year, risk_free_rate=cfg.risk_free_rate)
     summary["skipped_signals"] = sum(skip_counts.values())
     summary["skip_counts"] = dict(sorted(skip_counts.items()))
     summary["max_leverage"] = cfg.leverage
@@ -732,7 +797,7 @@ def run_backtest(
             }
             for ts, r in equity.iterrows()
         ],
-        "events": events[-200:],
+        "events": events,
         "final_state": {
             "side": _side_label(pos.side),
             "entry_ts": _json_ts(pos.entry_ts),

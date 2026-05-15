@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .base import FLAT, LONG, SHORT, StrategyContext, StrategyMeta, base_frame, finalize
+from .base import FLAT, LONG, SHORT, StrategyContext, StrategyMeta, base_frame, finalize, zscore
 
 
 META = StrategyMeta(
@@ -23,6 +23,12 @@ META = StrategyMeta(
 ELIGIBLE_IDS = ["confluence", "trend_following", "mean_reversion", "volatility_squeeze"]
 
 VOTE_THRESHOLD = 2
+
+# Strategies suited to each regime (by ATR z-score)
+_TREND_STRATEGIES = {"confluence", "trend_following", "volatility_squeeze"}
+_REVERSION_STRATEGIES = {"mean_reversion"}
+_ATR_Z_PERIOD = 20
+_REGIME_THRESHOLD = 0.5  # z > +0.5 = high-vol/trending, z < -0.5 = low-vol/mean-reverting
 
 
 def _get_child_analyzers() -> list[tuple[str, object]]:
@@ -88,8 +94,24 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
             all_votes[name] = pd.Series(0, index=frame.index, dtype=int)
             notes.append(f"{name}: error ({str(exc)[:120]}), neutral vote.")
 
-    # ── Per-bar vote tallying ────────────────────────────────────────
+    # ── Regime detection via ATR z-score ────────────────────────────
+    # High-vol regime (z > threshold): favour trend/momentum strategies
+    # Low-vol regime (z < -threshold): favour mean-reversion strategies
+    atr_z = zscore(frame["atr"], _ATR_Z_PERIOD).fillna(0.0)
+    high_vol_regime = atr_z > _REGIME_THRESHOLD   # trending / breakout
+    low_vol_regime = atr_z < -_REGIME_THRESHOLD   # mean-reverting / quiet
+
+    # ── Per-bar vote tallying with regime gating ─────────────────────
     vote_df = pd.DataFrame(all_votes, index=frame.index).fillna(0).astype(int)
+
+    # In high-vol regime: suppress reversion votes
+    # In low-vol regime: suppress trend votes
+    for name in all_votes:
+        col = vote_df[name]
+        if name in _REVERSION_STRATEGIES:
+            vote_df[name] = col.where(~high_vol_regime, other=0)
+        elif name in _TREND_STRATEGIES:
+            vote_df[name] = col.where(~low_vol_regime, other=0)
 
     long_votes = (vote_df == LONG).sum(axis=1)
     short_votes = (vote_df == SHORT).sum(axis=1)
@@ -148,11 +170,14 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
     # Score = long_votes - short_votes
     frame["score"] = long_votes - short_votes
 
-    # Reason per bar
+    # Reason per bar (includes regime context)
     source_str = ",".join(sources_ok) if sources_ok else "none"
+    regime_labels = []
+    for hz, lz in zip(high_vol_regime, low_vol_regime):
+        regime_labels.append("trend" if hz else ("reversion" if lz else "neutral"))
     frame["reason"] = [
-        f"votes L={lv} S={sv} (sources={source_str})"
-        for lv, sv in zip(long_votes, short_votes)
+        f"votes L={lv} S={sv} regime={reg} (sources={source_str})"
+        for lv, sv, reg in zip(long_votes, short_votes, regime_labels)
     ]
 
     # Top-level notes: latest bar summary + any child errors
