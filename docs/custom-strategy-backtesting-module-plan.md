@@ -98,6 +98,7 @@ Recommendation: start with an internal engine because the repo already has strat
    - `spread_bps`
    - `slippage_bps`
    - `leverage` as max allowed leverage; the engine computes used leverage per trade and skips oversized signals.
+   - `risk_reward_ratio` and `target_mode` to use a fixed R:R target or fall back to strategy-provided targets.
    - `allow_shorts`
    - `fill_model`: `next_open` or `close`
    - `position_sizing`: `risk_fixed`, `cash_fraction`, or `fixed_qty`
@@ -304,6 +305,19 @@ required_leverage = notional / current_equity
 ```
 
 If `required_leverage > max_leverage`, the signal is skipped and logged.
+
+The engine does not blindly force max leverage. It auto-selects the lowest leverage required for the risk-sized notional. That is the best leverage for the selected risk because increasing leverage without increasing quantity does not increase return, while increasing quantity would exceed the configured risk.
+
+### Risk/Reward Targets
+
+When `target_mode = risk_reward`, the target is derived from the configured R:R:
+
+```text
+long_target = entry + abs(entry - stop) * risk_reward_ratio
+short_target = entry - abs(entry - stop) * risk_reward_ratio
+```
+
+When `target_mode = strategy_or_rr`, a valid `target_px`/`tp2_px` from the strategy is used; if the strategy does not provide one, the same R:R formula is used as the fallback.
 
 ### Guardrails
 

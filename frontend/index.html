@@ -312,8 +312,10 @@
             <label>Spread bps<input id="btSpread" type="number" min="0" step="0.1" value="0" /></label>
             <label>Slippage bps<input id="btSlippage" type="number" min="0" step="0.1" value="0" /></label>
             <label>Max Leverage<input id="btLeverage" type="number" min="1" max="100" step="1" value="1" /></label>
+            <label>R:R<input id="btRiskReward" type="number" min="0.1" max="20" step="0.1" value="2" /></label>
             <label>Fill<select id="btFillModel"><option value="next_open">Next open</option><option value="close">Close</option></select></label>
             <label>Sizing<select id="btSizing"><option value="risk_fixed">Risk fixed</option><option value="cash_fraction">Cash fraction</option><option value="fixed_qty">Fixed qty</option></select></label>
+            <label>Target<select id="btTargetMode"><option value="strategy_or_rr">Strategy / R:R fallback</option><option value="risk_reward">Force R:R</option></select></label>
             <label>Risk Mode<select id="btRiskMode"><option value="fixed_amount">Fixed $</option><option value="percent_equity">% Equity</option></select></label>
             <label>Opposite Signal<select id="btOppositeMode"><option value="ignore">Ignore</option><option value="exit_only">Exit only</option><option value="reverse">Reverse</option></select></label>
             <label>Same Bar<select id="btSameBarPriority"><option value="stop_first">Stop first</option><option value="target_first">Target first</option></select></label>

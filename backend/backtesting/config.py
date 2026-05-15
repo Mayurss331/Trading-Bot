@@ -18,6 +18,8 @@ class BacktestConfig:
     spread_bps: float = 0.0
     slippage_bps: float = 0.0
     leverage: float = 1.0
+    risk_reward_ratio: float = 2.0
+    target_mode: str = "strategy_or_rr"
     allow_shorts: bool = True
     fill_model: str = "next_open"
     position_sizing: str = "risk_fixed"
@@ -40,6 +42,7 @@ class BacktestConfig:
         risk_mode = self.risk_mode if self.risk_mode in {"fixed_amount", "percent_equity"} else "fixed_amount"
         opposite_signal_mode = self.opposite_signal_mode if self.opposite_signal_mode in {"ignore", "exit_only", "reverse"} else "ignore"
         same_bar_priority = self.same_bar_priority if self.same_bar_priority in {"stop_first", "target_first"} else "stop_first"
+        target_mode = self.target_mode if self.target_mode in {"strategy_or_rr", "risk_reward"} else "strategy_or_rr"
         return BacktestConfig(
             pair=(self.pair or "B-ETH_USDT").strip(),
             market=(self.market or "ETHUSDT").strip(),
@@ -54,6 +57,8 @@ class BacktestConfig:
             spread_bps=max(0.0, min(float(self.spread_bps or 0.0), 1_000.0)),
             slippage_bps=max(0.0, min(float(self.slippage_bps or 0.0), 1_000.0)),
             leverage=max(1.0, min(float(self.leverage or 1.0), 100.0)),
+            risk_reward_ratio=max(0.1, min(float(self.risk_reward_ratio or 2.0), 20.0)),
+            target_mode=target_mode,
             allow_shorts=bool(self.allow_shorts and mode in {"margin", "futures"}),
             fill_model=fill_model,
             position_sizing=position_sizing,

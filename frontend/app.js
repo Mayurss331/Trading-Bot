@@ -202,6 +202,8 @@ const el = {
   btSpread: $('btSpread'),
   btSlippage: $('btSlippage'),
   btLeverage: $('btLeverage'),
+  btRiskReward: $('btRiskReward'),
+  btTargetMode: $('btTargetMode'),
   btFillModel: $('btFillModel'),
   btSizing: $('btSizing'),
   btRiskMode: $('btRiskMode'),
@@ -1755,6 +1757,8 @@ function backtestRequestPayload() {
     spread_bps: parseFloat(el.btSpread?.value || '0'),
     slippage_bps: parseFloat(el.btSlippage?.value || '0'),
     leverage: parseFloat(el.btLeverage?.value || '1'),
+    risk_reward_ratio: parseFloat(el.btRiskReward?.value || '2'),
+    target_mode: el.btTargetMode?.value || 'strategy_or_rr',
     allow_shorts: Boolean(el.btAllowShorts?.checked),
     fill_model: el.btFillModel?.value || 'next_open',
     position_sizing: el.btSizing?.value || 'risk_fixed',
@@ -1892,6 +1896,8 @@ function renderBacktestResult(data) {
       ['Win Rate', s.win_rate_pct != null ? fmtPct(s.win_rate_pct) : '—'],
       ['Trades', s.trades ?? '—'],
       ['Skipped', s.skipped_signals ?? 0],
+      ['Lev Used', s.max_leverage_used != null ? `${fmtReportNum(s.max_leverage_used, 2)}x` : '—'],
+      ['R:R', s.risk_reward_ratio != null ? fmtReportNum(s.risk_reward_ratio, 2) : (data.config?.risk_reward_ratio ?? '—')],
     ];
     if (data.config?.ai_verification_enabled || s.ai_verified_trades) {
       cells.push(['AI Verified', s.ai_verified_trades ?? 0]);

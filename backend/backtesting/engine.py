@@ -148,6 +148,14 @@ def _json_value(value: object) -> object:
     return str(value)[:500]
 
 
+def _float_or_nan(value: object) -> float:
+    try:
+        out = float(value)
+    except (TypeError, ValueError):
+        return np.nan
+    return out if np.isfinite(out) else np.nan
+
+
 def _ai_columns(data: pd.DataFrame) -> list[str]:
     selected: list[str] = []
     for col in AI_PREFERRED_COLUMNS:
@@ -229,6 +237,8 @@ def _ai_trade_payload(
             "risk_amount": risk_amount,
             "risk_per_unit": risk_per_unit(entry_px, stop_px),
             "reward_risk": abs(target_px - entry_px) / max(risk_per_unit(entry_px, stop_px), 1e-9),
+            "configured_risk_reward_ratio": cfg.risk_reward_ratio,
+            "target_mode": cfg.target_mode,
             "leverage_used": leverage_used,
             "max_leverage": cfg.leverage,
             "commission_bps": cfg.commission_bps,
@@ -258,6 +268,23 @@ def _size_position(entry_px: float, stop_px: float, equity: float, cfg: Backtest
         return qty, risk_unit, qty * risk_unit
     risk_amount = _risk_amount(equity, cfg)
     return max(risk_amount / risk_unit, 0.0), risk_unit, risk_amount
+
+
+def _target_from_rr(side: int, entry_px: float, stop_px: float, cfg: BacktestConfig) -> float:
+    risk_unit = risk_per_unit(entry_px, stop_px)
+    rr = max(float(cfg.risk_reward_ratio or 2.0), 0.1)
+    return entry_px + risk_unit * rr if side == LONG else entry_px - risk_unit * rr
+
+
+def _choose_target(side: int, entry_px: float, stop_px: float, target_hint: object, cfg: BacktestConfig) -> float:
+    target_hint_float = _float_or_nan(target_hint)
+    target_valid = (
+        np.isfinite(target_hint_float)
+        and ((side == LONG and target_hint_float > entry_px) or (side == SHORT and target_hint_float < entry_px))
+    )
+    if cfg.target_mode == "risk_reward" or not target_valid:
+        return _target_from_rr(side, entry_px, stop_px, cfg)
+    return target_hint_float
 
 
 def run_backtest(
@@ -390,33 +417,28 @@ def run_backtest(
             add_skip(ts, side, "no_equity", f"Equity={equity:,.2f}; no capital available.")
             return
         entry_px = _effective_price(float(raw_px), side, "entry", cfg)
-        stop_hint = row.get("stop_px", np.nan)
-        target_hint = row.get("tp2_px", row.get("target_px", np.nan))
+        stop_hint = _float_or_nan(row.get("stop_px", np.nan))
+        target_hint = _float_or_nan(row.get("tp2_px", row.get("target_px", np.nan)))
         stop_valid = (
             np.isfinite(stop_hint)
-            and ((side == LONG and float(stop_hint) < entry_px) or (side == SHORT and float(stop_hint) > entry_px))
-        )
-        target_valid = (
-            np.isfinite(target_hint)
-            and ((side == LONG and float(target_hint) > entry_px) or (side == SHORT and float(target_hint) < entry_px))
+            and ((side == LONG and stop_hint < entry_px) or (side == SHORT and stop_hint > entry_px))
         )
         if np.isfinite(stop_hint) and not stop_valid:
             add_skip(
                 ts,
                 side,
                 "invalid_stop",
-                f"Fill price={entry_px:,.4f} crossed planned stop={float(stop_hint):,.4f}; setup invalid.",
+                f"Fill price={entry_px:,.4f} crossed planned stop={stop_hint:,.4f}; setup invalid.",
             )
             return
         if stop_valid:
-            stop_px = float(stop_hint)
-            target_px = float(target_hint) if target_valid else derive_brackets(side, entry_px, stop_px, row.get("atr", np.nan))[1]
+            stop_px = stop_hint
+            target_px = _choose_target(side, entry_px, stop_px, target_hint, cfg)
             init_risk = risk_per_unit(entry_px, stop_px)
         else:
-            stop_anchor = float(stop_hint) if np.isfinite(stop_hint) else float(row.get("st_line", np.nan))
-            stop_px, target_px, init_risk = derive_brackets(side, entry_px, stop_anchor, float(row.get("atr", np.nan)))
-            if target_valid:
-                target_px = float(target_hint)
+            stop_anchor = stop_hint if np.isfinite(stop_hint) else _float_or_nan(row.get("st_line", np.nan))
+            stop_px, _target_px, init_risk = derive_brackets(side, entry_px, stop_anchor, _float_or_nan(row.get("atr", np.nan)))
+            target_px = _choose_target(side, entry_px, stop_px, target_hint, cfg)
         qty, init_risk, risk_amount = _size_position(entry_px, stop_px, equity, cfg)
         if qty <= 0:
             add_skip(ts, side, "no_qty", "Calculated quantity is zero.")
@@ -688,6 +710,12 @@ def run_backtest(
     summary["skipped_signals"] = sum(skip_counts.values())
     summary["skip_counts"] = dict(sorted(skip_counts.items()))
     summary["max_leverage"] = cfg.leverage
+    summary["max_leverage_used"] = max([float(t.get("leverage_used") or 0.0) for t in trades], default=0.0)
+    summary["avg_leverage_used"] = (
+        sum(float(t.get("leverage_used") or 0.0) for t in trades) / len(trades) if trades else 0.0
+    )
+    summary["risk_reward_ratio"] = cfg.risk_reward_ratio
+    summary["target_mode"] = cfg.target_mode
     summary["ai_verified_trades"] = sum(1 for t in trades if t.get("ai_confidence") is not None)
 
     return {

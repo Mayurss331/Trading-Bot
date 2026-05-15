@@ -53,6 +53,8 @@ class BacktestRequest(BaseModel):
     spread_bps: float = 0
     slippage_bps: float = 0
     leverage: float = 1
+    risk_reward_ratio: float = 2
+    target_mode: str = "strategy_or_rr"
     allow_shorts: bool = True
     fill_model: str = "next_open"
     position_sizing: str = "risk_fixed"
