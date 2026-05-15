@@ -11,7 +11,7 @@ from sqlalchemy import select
 from ..bot_loader import bot
 from ..db.database import AsyncSessionLocal
 from ..db.models import UserSetting
-from ..db.persistence import store_tracker_signal_events
+from ..db.persistence import store_trade, store_tracker_signal_events
 from ..utils import clean, coin_from_pair, futures_market_for_coin, futures_pair_for_coin, make_cfg
 from strategies.base import StrategyContext
 from strategies.registry import get_strategy, normalize_strategy_id
@@ -119,8 +119,6 @@ def _execute_one(coin: str, strategy_id: str, risk: float, lookback_days: int, t
         return [f"{pair}: background executor skipped scanner-only strategy {strategy_id}."]
 
     cfg = make_cfg(pair, market, "futures", risk, lookback_days, timeframe=timeframe)
-    if not cfg.place_orders:
-        return []
     cfg.allow_shorts = _env_bool("BACKGROUND_ALLOW_SHORTS", False)
 
     slot = _EXECUTION_STATE.setdefault(pair, {"state": bot.TradeState(), "last_ts": None})
@@ -149,6 +147,8 @@ def _execute_one(coin: str, strategy_id: str, risk: float, lookback_days: int, t
             bot.process_closed_bar(ts, row, state, boot_cfg, frame.loc[:ts])
             slot["last_ts"] = ts
         last_ts = slot["last_ts"]
+        # Discard trades generated during historical bootstrap to avoid duplicates
+        bot.drain_completed_trades()
         if isinstance(last_ts, pd.Timestamp):
             events.append(f"{pair}: {strategy_id} background executor bootstrapped to {bot._fmt_ts(last_ts)}.")
             state = bot.TradeState(realized_pnl=state.realized_pnl)
@@ -175,23 +175,22 @@ def _execute_one(coin: str, strategy_id: str, risk: float, lookback_days: int, t
 
 
 async def _execute_saved_tracker_orders(settings: dict, coins: list[str], strategy_id: str, risk: float, lookback_days: int, timeframe: str | None = None) -> None:
-    if str(settings.get("executionMode") or "").lower() != "real":
-        return
     strategy_id = normalize_strategy_id(strategy_id)
     if strategy_id in SCANNER_ONLY_STRATEGIES or strategy_id not in EXECUTABLE_STRATEGIES:
         logger.info("Background executor skipped: strategy %s is scanner-only or not executable.", strategy_id)
         return
-    if not _env_bool("PLACE_ORDERS") and not _env_bool("COINDCX_PLACE_ORDERS") and not _env_bool("BOT_PLACE_ORDERS"):
-        return
-
+    is_real = str(settings.get("executionMode") or "").lower() == "real" and (
+        _env_bool("PLACE_ORDERS") or _env_bool("COINDCX_PLACE_ORDERS") or _env_bool("BOT_PLACE_ORDERS")
+    )
+    mode_label = "real" if is_real else "paper"
     max_symbols = max(1, min(int(float(os.getenv("BACKGROUND_EXECUTOR_MAX_SYMBOLS", "3"))), 12))
     for coin in coins[:max_symbols]:
         try:
             events = await asyncio.to_thread(_execute_one, coin, strategy_id, risk, lookback_days, timeframe)
             for event in events:
-                logger.info("Background executor: %s", event)
+                logger.info("Background executor [%s]: %s", mode_label, event)
         except Exception as exc:
-            logger.warning("Background executor failed for %s: %s", coin, exc)
+            logger.warning("Background executor [%s] failed for %s: %s", mode_label, coin, exc)
 
 
 async def scan_saved_tracker_coins() -> None:
@@ -229,3 +228,7 @@ async def scan_saved_tracker_coins() -> None:
         logger.info("Background tracker stored %d signal rows for %s", len(rows), ",".join(coins))
 
     await _execute_saved_tracker_orders(settings, coins, strategy_id, risk, lookback_days, timeframe)
+
+    # Drain any completed trades from background execution (paper or real)
+    for trade in bot.drain_completed_trades():
+        await store_trade(trade)
