@@ -62,6 +62,8 @@ class BacktestRequest(BaseModel):
     opposite_signal_mode: str = "ignore"
     same_bar_priority: str = "stop_first"
     finalize_open_trade: bool = True
+    warmup_bars: int = 50
+    min_signal_score: float = 0.0
     ai_verification_enabled: bool = False
     ai_min_confidence: float = 70
     ai_candles: int = 80

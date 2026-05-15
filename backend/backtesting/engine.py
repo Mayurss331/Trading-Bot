@@ -690,10 +690,15 @@ def run_backtest(
                 pending_entry = None
             if pending_entry and pos.side == FLAT and not closed_this_bar:
                 entry_side = int(pending_entry["side"])
-                if entry_side == SHORT and not cfg.allow_shorts:
+                pending_row = pending_entry["row"]
+                pending_score = abs(float(pending_row.get("score", 0) or 0))
+                if cfg.min_signal_score > 0 and pending_score < cfg.min_signal_score:
+                    add_skip(ts, entry_side, "weak_signal",
+                             f"score={pending_score:.2f} < min={cfg.min_signal_score:.2f}")
+                elif entry_side == SHORT and not cfg.allow_shorts:
                     add_skip(ts, entry_side, "shorts_disabled", f"SHORT ignored in {cfg.mode.upper()} mode.")
                 else:
-                    open_position(ts, raw_open, entry_side, pending_entry["row"], current_equity)
+                    open_position(ts, raw_open, entry_side, pending_row, current_equity)
                 pending_entry = None
 
         if pos.side != FLAT:
@@ -745,7 +750,11 @@ def run_backtest(
                 continue
             side = int(row.get("entry_side", 0) or 0)
             if side in (LONG, SHORT):
-                if cfg.fill_model == "close":
+                score_val = abs(float(row.get("score", 0) or 0))
+                if cfg.min_signal_score > 0 and score_val < cfg.min_signal_score:
+                    add_skip(ts, side, "weak_signal",
+                             f"score={score_val:.2f} < min={cfg.min_signal_score:.2f}")
+                elif cfg.fill_model == "close":
                     if side == SHORT and not cfg.allow_shorts:
                         add_skip(ts, side, "shorts_disabled", f"SHORT ignored in {cfg.mode.upper()} mode.")
                     else:

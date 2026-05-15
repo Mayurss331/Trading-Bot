@@ -29,6 +29,8 @@ class BacktestConfig:
     finalize_open_trade: bool = True
     # Warmup: skip new entries for first N bars (indicators need to stabilise)
     warmup_bars: int = 50
+    # Minimum absolute score to accept an entry signal (0 = no filter)
+    min_signal_score: float = 0.0
     # Risk-free rate for Sharpe/Sortino (annualised, e.g. 0.05 = 5%)
     risk_free_rate: float = 0.0
     # EOD square-off: force-close all positions at or after eod_exit_time each day
@@ -102,6 +104,7 @@ class BacktestConfig:
             same_bar_priority=same_bar_priority,
             finalize_open_trade=bool(self.finalize_open_trade),
             warmup_bars=max(0, min(int(self.warmup_bars or 50), 500)),
+            min_signal_score=max(0.0, min(float(self.min_signal_score or 0.0), 100.0)),
             risk_free_rate=max(0.0, min(float(self.risk_free_rate or 0.0), 1.0)),
             eod_exit=bool(self.eod_exit),
             eod_exit_time=eod_time,

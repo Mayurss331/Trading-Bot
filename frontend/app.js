@@ -206,6 +206,7 @@ const el = {
   btLookback: $('btLookback'),
   btLookbackHint: $('btLookbackHint'),
   btWarmupBars: $('btWarmupBars'),
+  btMinSignalScore: $('btMinSignalScore'),
   btCommission: $('btCommission'),
   btSpread: $('btSpread'),
   btSlippage: $('btSlippage'),
@@ -377,6 +378,7 @@ function saveDashboardPreferences() {
     btPair: el.btPairHidden?.value || '',
     btMarket: el.btMarketHidden?.value || '',
     btCoinLabel: el.btCoinLabel?.textContent || '',
+    btMinSignalScore: el.btMinSignalScore?.value || '0',
     mode: el.mode.value,
     risk: el.risk.value,
     lookback: el.lookback.value,
@@ -454,6 +456,7 @@ async function applyDashboardPreferences() {
     if (el.btCoinLabel)    el.btCoinLabel.textContent = prefs.btCoinLabel || prefs.btPair;
     if (el.btCoinSearch)   el.btCoinSearch.value = '';
   }
+  setValue(el.btMinSignalScore, prefs.btMinSignalScore);
   setValue(el.pair2, prefs.pair2);
   setValue(el.market2, prefs.market2);
   setValue(el.chainSelect, prefs.chain);
@@ -1774,6 +1777,7 @@ function backtestRequestPayload() {
     timeframe: normalizeTimeframe(el.btTimeframeSelect?.value || el.timeframe?.value),
     lookback_days: parseInt(el.btLookback?.value || el.lookback?.value || '14', 10),
     warmup_bars: parseInt(el.btWarmupBars?.value || '50', 10),
+    min_signal_score: parseFloat(el.btMinSignalScore?.value || '0'),
     initial_capital: parseFloat(el.btInitialCapital?.value || '10000'),
     risk: parseFloat(el.btRisk?.value || el.risk?.value || '10'),
     commission_bps: parseFloat(el.btCommission?.value || '0'),
