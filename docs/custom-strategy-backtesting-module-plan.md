@@ -102,6 +102,7 @@ Recommendation: start with an internal engine because the repo already has strat
    - `fill_model`: `next_open` or `close`
    - `position_sizing`: `risk_fixed`, `cash_fraction`, or `fixed_qty`
    - `finalize_open_trade`
+   - optional `ai_verification_enabled`, `ai_min_confidence`, and `ai_candles` to gate entries through GPT before a trade is opened
 5. Produce a full trade ledger:
    - entry/exit timestamps
    - side
@@ -257,6 +258,19 @@ Fallback when no valid stop exists:
 ```text
 synthetic_stop_gap = max(entry_px * 0.001, atr, 1e-6)
 ```
+
+### AI Verification Gate
+
+When enabled, the execution engine verifies a candidate entry after normal stop, size, fee, and max-leverage checks pass, but before cash is debited and the position is opened.
+
+The payload sent to GPT contains:
+
+- pair, market, mode, timeframe, and strategy metadata
+- signal time and fill time
+- proposed side, effective entry, stop, target, quantity, notional, risk amount, reward/risk, and leverage used
+- recent OHLCV plus available indicator columns, capped by `ai_candles`
+
+For `next_open` fills, recent candles end at the signal candle, not the fill candle, so the verifier cannot see future high/low/close data. If GPT returns a confidence below `ai_min_confidence`, rejects the setup, times out, or `OPENAI_API_KEY` is missing, the signal is skipped and recorded in `skip_counts`.
 
 Add later:
 

@@ -317,10 +317,13 @@
             <label>Risk Mode<select id="btRiskMode"><option value="fixed_amount">Fixed $</option><option value="percent_equity">% Equity</option></select></label>
             <label>Opposite Signal<select id="btOppositeMode"><option value="ignore">Ignore</option><option value="exit_only">Exit only</option><option value="reverse">Reverse</option></select></label>
             <label>Same Bar<select id="btSameBarPriority"><option value="stop_first">Stop first</option><option value="target_first">Target first</option></select></label>
+            <label>AI Min %<input id="btAiMinConfidence" type="number" min="0" max="100" step="1" value="70" /></label>
+            <label>AI Candles<input id="btAiCandles" type="number" min="20" max="300" step="10" value="80" /></label>
           </div>
           <div class="bt-actions">
             <label class="bt-check"><input id="btAllowShorts" type="checkbox" checked /> Shorts</label>
             <label class="bt-check"><input id="btFinalizeOpen" type="checkbox" checked /> Finalize open</label>
+            <label class="bt-check"><input id="btAiVerify" type="checkbox" /> AI verification</label>
             <button id="runBacktestBtn" type="button" class="btn-primary">Run Backtest</button>
           </div>
         </section>

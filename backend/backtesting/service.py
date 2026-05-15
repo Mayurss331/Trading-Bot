@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+from typing import Any, Callable
 
 import pandas as pd
 from sqlalchemy import select
@@ -12,9 +13,13 @@ from backend.db.models import BacktestEquityPoint, BacktestRun, BacktestTrade, C
 from backend.utils import bars_payload, clean, make_cfg
 from strategies.base import StrategyContext
 
+from .ai_verifier import make_openai_trade_verifier
 from .config import BacktestConfig
 from .engine import naive_equity_ts, naive_trade_row, run_backtest
 from .strategy_loader import LoadedStrategy, compile_custom_strategy, load_builtin_strategy, strategy_code_warnings
+
+
+ProgressCallback = Callable[[dict[str, Any]], None]
 
 
 def _naive_ts(ts: pd.Timestamp | None) -> datetime | None:
@@ -90,12 +95,41 @@ async def validate_custom_strategy(row: CustomStrategy) -> tuple[bool, str]:
         return False, str(exc)
 
 
-async def run_and_store_backtest(cfg: BacktestConfig) -> dict:
+def _emit_progress(
+    progress: ProgressCallback | None,
+    *,
+    stage: str,
+    progress_value: float,
+    message: str,
+    event: str | None = None,
+    stats: dict[str, Any] | None = None,
+) -> None:
+    if progress is None:
+        return
+    progress({
+        "stage": stage,
+        "progress": max(0.0, min(progress_value, 1.0)),
+        "message": message,
+        "event": event,
+        "stats": stats or {},
+    })
+
+
+async def run_and_store_backtest(cfg: BacktestConfig, progress: ProgressCallback | None = None) -> dict:
     cfg = cfg.normalized()
+    _emit_progress(progress, stage="strategy", progress_value=0.03, message="Loading strategy.")
     loaded = await load_strategy(cfg)
+    _emit_progress(progress, stage="data", progress_value=0.08, message="Fetching historical candles.")
     bars, latest_closed, used_pair, used_source = await asyncio.to_thread(_sync_fetch_bars, cfg)
     if bars.empty:
         return {"ok": False, "message": "No candles returned for this pair/market."}
+    _emit_progress(
+        progress,
+        stage="data",
+        progress_value=0.16,
+        message=f"Loaded {len(bars)} candles.",
+        stats={"bars_total": len(bars)},
+    )
 
     runtime_cfg = make_cfg(cfg.pair, cfg.market, cfg.mode, cfg.risk, cfg.lookback_days, timeframe=cfg.timeframe, exec_mode="paper")
     ctx = StrategyContext(
@@ -104,14 +138,35 @@ async def run_and_store_backtest(cfg: BacktestConfig) -> dict:
         mode=cfg.mode,
         risk=cfg.risk,
         allow_shorts=cfg.allow_shorts,
-        extras={"latest_closed": latest_closed},
+        extras={
+            "latest_closed": latest_closed,
+            "strategy_id": loaded.id,
+            "strategy_title": loaded.title,
+            "strategy_description": loaded.description,
+        },
     )
+    _emit_progress(progress, stage="analysis", progress_value=0.20, message="Running strategy script.")
     analysis = loaded.analyze(bars, ctx)
     frame = analysis["frame"]
-    result = run_backtest(bars, frame, ctx, cfg)
+    verifier = make_openai_trade_verifier(cfg) if cfg.ai_verification_enabled else None
+
+    def engine_progress(update: dict[str, Any]) -> None:
+        engine_pct = float(update.get("progress") or 0.0)
+        _emit_progress(
+            progress,
+            stage=str(update.get("stage") or "simulating"),
+            progress_value=0.24 + engine_pct * 0.62,
+            message=str(update.get("message") or "Simulating trades."),
+            event=update.get("event"),
+            stats=update.get("stats") if isinstance(update.get("stats"), dict) else None,
+        )
+
+    _emit_progress(progress, stage="simulating", progress_value=0.24, message="Simulating broker fills.")
+    result = await asyncio.to_thread(run_backtest, bars, frame, ctx, cfg, verifier, engine_progress)
     if not result.get("ok"):
         return result
 
+    _emit_progress(progress, stage="storing", progress_value=0.90, message="Saving backtest result.")
     run_id = await store_backtest_result(
         cfg=cfg,
         loaded=loaded,
@@ -119,6 +174,7 @@ async def run_and_store_backtest(cfg: BacktestConfig) -> dict:
         data_source=used_source or used_pair or "coindcx",
         result=result,
     )
+    _emit_progress(progress, stage="rendering", progress_value=0.95, message=f"Preparing Run #{run_id}.")
     meta = analysis.get("meta")
     chart_bars = bars_payload(
         bars,
@@ -126,7 +182,7 @@ async def run_and_store_backtest(cfg: BacktestConfig) -> dict:
         min(len(bars), 1000),
         extra_cols=["entry_side", "exit_long", "exit_short", "reason"],
     )
-    return clean({
+    payload = clean({
         "ok": True,
         "run_id": run_id,
         "strategy": {
@@ -156,6 +212,8 @@ async def run_and_store_backtest(cfg: BacktestConfig) -> dict:
         "bars": chart_bars,
         "config": cfg.to_dict(),
     })
+    _emit_progress(progress, stage="completed", progress_value=1.0, message=f"Run #{run_id} completed.")
+    return payload
 
 
 async def store_backtest_result(

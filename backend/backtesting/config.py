@@ -25,6 +25,10 @@ class BacktestConfig:
     opposite_signal_mode: str = "ignore"
     same_bar_priority: str = "stop_first"
     finalize_open_trade: bool = True
+    ai_verification_enabled: bool = False
+    ai_min_confidence: float = 70.0
+    ai_candles: int = 80
+    ai_model: str = "gpt-5.4-mini"
     limit: int | None = None
 
     def normalized(self) -> "BacktestConfig":
@@ -57,6 +61,10 @@ class BacktestConfig:
             opposite_signal_mode=opposite_signal_mode,
             same_bar_priority=same_bar_priority,
             finalize_open_trade=bool(self.finalize_open_trade),
+            ai_verification_enabled=bool(self.ai_verification_enabled),
+            ai_min_confidence=max(0.0, min(float(self.ai_min_confidence or 70.0), 100.0)),
+            ai_candles=max(20, min(int(self.ai_candles or 80), 300)),
+            ai_model=(self.ai_model or "gpt-5.4-mini").strip()[:80] or "gpt-5.4-mini",
             limit=max(60, min(int(self.limit), 100_000)) if self.limit else None,
         )
 

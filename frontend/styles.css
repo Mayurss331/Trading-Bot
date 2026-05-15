@@ -1488,7 +1488,7 @@ body.drawer-open  { overflow: hidden; }
 .bt-status-err { color: var(--bear); }
 .bt-summary {
   display: grid;
-  grid-template-columns: repeat(7, minmax(90px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
   gap: 8px;
   margin-bottom: 10px;
 }

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, Callable
 
 import numpy as np
 import pandas as pd
@@ -9,6 +10,45 @@ from strategies.base import LONG, SHORT, FLAT, StrategyContext, derive_brackets,
 
 from .config import BacktestConfig
 from .metrics import compute_summary
+
+
+TradeVerifier = Callable[[dict[str, Any]], dict[str, Any]]
+ProgressCallback = Callable[[dict[str, Any]], None]
+
+AI_PREFERRED_COLUMNS = [
+    "Open",
+    "High",
+    "Low",
+    "Close",
+    "Volume",
+    "score",
+    "raw_score",
+    "rsi",
+    "atr",
+    "ema_fast",
+    "ema_slow",
+    "ema_9",
+    "ema_21",
+    "vwap",
+    "rolling_vwap",
+    "supertrend",
+    "st_line",
+    "st_dir",
+    "bb_lower",
+    "bb_mid",
+    "bb_upper",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "entry_side",
+    "exit_long",
+    "exit_short",
+    "stop_px",
+    "target_px",
+    "tp1_px",
+    "tp2_px",
+    "reason",
+]
 
 
 @dataclass
@@ -25,6 +65,10 @@ class OpenPosition:
     initial_risk_amount: float = 0.0
     notional: float = 0.0
     leverage_used: float = 1.0
+    ai_confidence: float | None = None
+    ai_reason: str | None = None
+    ai_model: str | None = None
+    ai_risks: list[str] | None = None
 
 
 def _side_label(side: int) -> str:
@@ -77,6 +121,125 @@ def _to_naive(ts: pd.Timestamp | None) -> pd.Timestamp | None:
     return ts
 
 
+def _short_text(value: object, limit: int = 180) -> str:
+    text = str(value or "").replace("\n", " ").strip()
+    return text[:limit] + ("..." if len(text) > limit else "")
+
+
+def _json_value(value: object) -> object:
+    if value is None or value is pd.NA:
+        return None
+    if isinstance(value, pd.Timestamp):
+        return _json_ts(value)
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, np.integer):
+        return int(value)
+    if isinstance(value, (int, str)):
+        return value
+    if isinstance(value, (float, np.floating)):
+        value = float(value)
+        return value if np.isfinite(value) else None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):
+        pass
+    return str(value)[:500]
+
+
+def _ai_columns(data: pd.DataFrame) -> list[str]:
+    selected: list[str] = []
+    for col in AI_PREFERRED_COLUMNS:
+        if col in data.columns and col not in selected:
+            selected.append(col)
+
+    for col in data.columns:
+        if col in selected or len(selected) >= 32:
+            continue
+        sample = data[col].dropna().tail(1)
+        if sample.empty:
+            continue
+        value = sample.iloc[0]
+        if isinstance(value, (str, int, float, bool, np.integer, np.floating, np.bool_)):
+            selected.append(col)
+    return selected
+
+
+def _recent_ai_candles(data: pd.DataFrame, signal_ts: pd.Timestamp, limit: int) -> list[dict[str, object]]:
+    try:
+        window = data.loc[:signal_ts].tail(limit)
+    except Exception:
+        window = data.tail(limit)
+    cols = _ai_columns(window)
+    rows: list[dict[str, object]] = []
+    for ts, row in window.iterrows():
+        item: dict[str, object] = {"time": _json_ts(ts)}
+        for col in cols:
+            key = col.lower() if col in {"Open", "High", "Low", "Close", "Volume"} else col
+            item[key] = _json_value(row.get(col))
+        rows.append(item)
+    return rows
+
+
+def _ai_trade_payload(
+    data: pd.DataFrame,
+    cfg: BacktestConfig,
+    ctx: StrategyContext,
+    ts: pd.Timestamp,
+    raw_px: float,
+    side: int,
+    row: pd.Series,
+    equity: float,
+    entry_px: float,
+    stop_px: float,
+    target_px: float,
+    qty: float,
+    risk_amount: float,
+    notional: float,
+    leverage_used: float,
+) -> dict[str, object]:
+    signal_ts = _as_ts(row.name if isinstance(row.name, pd.Timestamp) else None) or ts
+    return {
+        "pair": cfg.pair,
+        "market": cfg.market,
+        "mode": cfg.mode,
+        "timeframe": cfg.timeframe,
+        "strategy": {
+            "id": ctx.extras.get("strategy_id", cfg.strategy),
+            "title": ctx.extras.get("strategy_title", cfg.strategy),
+            "description": ctx.extras.get("strategy_description"),
+        },
+        "data_visibility": {
+            "signal_time": _json_ts(signal_ts),
+            "fill_time": _json_ts(ts),
+            "fill_model": cfg.fill_model,
+            "known_candles_end_at": _json_ts(signal_ts),
+            "note": "For next_open fills, candles stop at the signal candle to avoid lookahead.",
+        },
+        "candidate_position": {
+            "side": _side_label(side),
+            "raw_fill_price": raw_px,
+            "effective_entry_price": entry_px,
+            "stop_price": stop_px,
+            "target_price": target_px,
+            "qty": qty,
+            "notional": notional,
+            "equity": equity,
+            "risk_amount": risk_amount,
+            "risk_per_unit": risk_per_unit(entry_px, stop_px),
+            "reward_risk": abs(target_px - entry_px) / max(risk_per_unit(entry_px, stop_px), 1e-9),
+            "leverage_used": leverage_used,
+            "max_leverage": cfg.leverage,
+            "commission_bps": cfg.commission_bps,
+            "spread_bps": cfg.spread_bps,
+            "slippage_bps": cfg.slippage_bps,
+            "strategy_reason": _json_value(row.get("reason")),
+        },
+        "recent_candles": _recent_ai_candles(data, signal_ts, cfg.ai_candles),
+    }
+
+
 def _risk_amount(equity: float, cfg: BacktestConfig) -> float:
     if cfg.risk_mode == "percent_equity":
         pct = max(0.0, min(float(cfg.risk or 0.0), 100.0)) / 100.0
@@ -97,7 +260,14 @@ def _size_position(entry_px: float, stop_px: float, equity: float, cfg: Backtest
     return max(risk_amount / risk_unit, 0.0), risk_unit, risk_amount
 
 
-def run_backtest(bars: pd.DataFrame, frame: pd.DataFrame, ctx: StrategyContext, cfg: BacktestConfig) -> dict:
+def run_backtest(
+    bars: pd.DataFrame,
+    frame: pd.DataFrame,
+    ctx: StrategyContext,
+    cfg: BacktestConfig,
+    verify_trade: TradeVerifier | None = None,
+    progress: ProgressCallback | None = None,
+) -> dict:
     cfg = cfg.normalized()
     data = bars.join(
         frame.drop(columns=[c for c in ["Open", "High", "Low", "Close", "Volume"] if c in frame.columns], errors="ignore"),
@@ -117,10 +287,43 @@ def run_backtest(bars: pd.DataFrame, frame: pd.DataFrame, ctx: StrategyContext, 
     pending_reverse: dict | None = None
     pending_exit: str | None = None
     closed_this_bar = False
+    rows = list(data.iterrows())
+    total_bars = max(len(rows), 1)
+    bar_cursor = 0
+    ai_checks = 0
+    ai_approved = 0
+
+    def emit_progress(
+        stage: str = "simulating",
+        *,
+        message: str | None = None,
+        event: str | None = None,
+    ) -> None:
+        if progress is None:
+            return
+        try:
+            progress({
+                "stage": stage,
+                "progress": min(max((bar_cursor + 1) / total_bars, 0.0), 1.0),
+                "message": message,
+                "event": event,
+                "stats": {
+                    "bars_done": min(bar_cursor + 1, total_bars),
+                    "bars_total": total_bars,
+                    "trades": len(trades),
+                    "skipped": sum(skip_counts.values()),
+                    "ai_checks": ai_checks,
+                    "ai_approved": ai_approved,
+                },
+            })
+        except Exception:
+            pass
 
     def add_skip(ts: pd.Timestamp, side: int, reason: str, detail: str) -> None:
         skip_counts[reason] = skip_counts.get(reason, 0) + 1
-        events.append(f"[{ts.strftime('%Y-%m-%d %H:%M')}] SKIP {_side_label(side)} | {detail}")
+        event = f"[{ts.strftime('%Y-%m-%d %H:%M')}] SKIP {_side_label(side)} | {detail}"
+        events.append(event)
+        emit_progress(message=detail, event=event)
 
     def mark_equity(ts: pd.Timestamp, close_px: float) -> float:
         open_value = 0.0
@@ -169,14 +372,20 @@ def run_backtest(bars: pd.DataFrame, frame: pd.DataFrame, ctx: StrategyContext, 
             "duration_minutes": _duration_minutes(pos.entry_ts, ts),
             "stop_px": pos.stop_px,
             "target_px": pos.target_px,
+            "ai_confidence": pos.ai_confidence,
+            "ai_reason": pos.ai_reason,
+            "ai_model": pos.ai_model,
+            "ai_risks": pos.ai_risks or [],
         }
         trades.append(trade)
-        events.append(f"[{ts.strftime('%Y-%m-%d %H:%M')}] EXIT {_side_label(pos.side)} {reason} | PnL={net:,.2f}")
+        event = f"[{ts.strftime('%Y-%m-%d %H:%M')}] EXIT {_side_label(pos.side)} {reason} | PnL={net:,.2f}"
+        events.append(event)
+        emit_progress(message=f"Closed {_side_label(pos.side)} with {reason}.", event=event)
         pos = OpenPosition()
         closed_this_bar = True
 
     def open_position(ts: pd.Timestamp, raw_px: float, side: int, row: pd.Series, equity: float) -> None:
-        nonlocal cash, pos
+        nonlocal cash, pos, ai_checks, ai_approved
         if equity <= 0:
             add_skip(ts, side, "no_equity", f"Equity={equity:,.2f}; no capital available.")
             return
@@ -229,6 +438,70 @@ def run_backtest(bars: pd.DataFrame, frame: pd.DataFrame, ctx: StrategyContext, 
         if entry_fee >= cash:
             add_skip(ts, side, "fee", f"Entry fee={entry_fee:,.2f} exceeds cash={cash:,.2f}")
             return
+        ai_decision: dict[str, Any] | None = None
+        if cfg.ai_verification_enabled:
+            if verify_trade is None:
+                add_skip(ts, side, "ai_error", "AI verification is enabled but no verifier is configured.")
+                return
+            payload = _ai_trade_payload(
+                data=data,
+                cfg=cfg,
+                ctx=ctx,
+                ts=ts,
+                raw_px=float(raw_px),
+                side=side,
+                row=row,
+                equity=equity,
+                entry_px=entry_px,
+                stop_px=stop_px,
+                target_px=target_px,
+                qty=qty,
+                risk_amount=risk_amount,
+                notional=notional,
+                leverage_used=leverage_used,
+            )
+            candle_count = len(payload.get("recent_candles") or [])
+            if candle_count < min(20, cfg.ai_candles):
+                add_skip(ts, side, "ai_context", f"AI verification needs more candles; only {candle_count} available.")
+                return
+            ai_checks += 1
+            emit_progress(
+                "ai_verification",
+                message=f"Checking {_side_label(side)} with AI ({ai_checks} checks).",
+                event=f"[{ts.strftime('%Y-%m-%d %H:%M')}] AI CHECK {_side_label(side)} | candles={candle_count}",
+            )
+            try:
+                ai_decision = verify_trade(payload)
+            except Exception as exc:
+                add_skip(ts, side, "ai_error", f"AI verification failed: {_short_text(exc)}")
+                return
+            confidence = ai_decision.get("confidence") if isinstance(ai_decision, dict) else None
+            if not isinstance(ai_decision, dict) or not ai_decision.get("ok"):
+                reason = ai_decision.get("reason") if isinstance(ai_decision, dict) else "No AI decision returned."
+                add_skip(ts, side, "ai_error", _short_text(reason))
+                return
+            if not ai_decision.get("approved"):
+                try:
+                    conf_value = float(confidence)
+                except (TypeError, ValueError):
+                    conf_value = 0.0
+                reason_key = "ai_low_confidence" if conf_value < cfg.ai_min_confidence else "ai_rejected"
+                add_skip(
+                    ts,
+                    side,
+                    reason_key,
+                    f"AI confidence={conf_value:.1f} min={cfg.ai_min_confidence:.1f}; "
+                    f"{_short_text(ai_decision.get('reason'))}",
+                )
+                return
+            ai_approved += 1
+            event = (
+                f"[{ts.strftime('%Y-%m-%d %H:%M')}] AI APPROVED {_side_label(side)} | "
+                f"confidence={float(confidence or 0):.1f} min={cfg.ai_min_confidence:.1f} "
+                f"model={_short_text(ai_decision.get('model'), 40)}"
+            )
+            events.append(event)
+            emit_progress("ai_verification", message="AI approved candidate entry.", event=event)
         cash -= entry_fee
         pos = OpenPosition(
             side=side,
@@ -243,12 +516,18 @@ def run_backtest(bars: pd.DataFrame, frame: pd.DataFrame, ctx: StrategyContext, 
             initial_risk_amount=risk_amount,
             notional=notional,
             leverage_used=leverage_used,
+            ai_confidence=float(ai_decision["confidence"]) if ai_decision and ai_decision.get("confidence") is not None else None,
+            ai_reason=str(ai_decision.get("reason")) if ai_decision else None,
+            ai_model=str(ai_decision.get("model")) if ai_decision else None,
+            ai_risks=list(ai_decision.get("risks") or []) if ai_decision else None,
         )
-        events.append(
+        event = (
             f"[{ts.strftime('%Y-%m-%d %H:%M')}] ENTRY {_side_label(side)} | "
             f"Entry={entry_px:,.4f} Qty={qty:,.8f} Notional={notional:,.2f} "
             f"Lev={leverage_used:.2f}x/{cfg.leverage:.2f}x"
         )
+        events.append(event)
+        emit_progress(message=f"Opened {_side_label(side)} position.", event=event)
 
     def update_trailing_stop(ts: pd.Timestamp, row: pd.Series) -> None:
         close_px = float(row.get("Close", np.nan))
@@ -256,12 +535,16 @@ def run_backtest(bars: pd.DataFrame, frame: pd.DataFrame, ctx: StrategyContext, 
             next_stop = max(pos.stop_px, float(row.get("st_line")))
             if np.isfinite(close_px) and next_stop < close_px and next_stop > pos.stop_px + 1e-9:
                 pos.stop_px = next_stop
-                events.append(f"[{ts.strftime('%Y-%m-%d %H:%M')}] TRAIL LONG SL -> {pos.stop_px:,.4f}")
+                event = f"[{ts.strftime('%Y-%m-%d %H:%M')}] TRAIL LONG SL -> {pos.stop_px:,.4f}"
+                events.append(event)
+                emit_progress(message="Updated trailing stop.", event=event)
         elif pos.side == SHORT and np.isfinite(row.get("st_line", np.nan)):
             next_stop = min(pos.stop_px, float(row.get("st_line")))
             if np.isfinite(close_px) and next_stop > close_px and next_stop < pos.stop_px - 1e-9:
                 pos.stop_px = next_stop
-                events.append(f"[{ts.strftime('%Y-%m-%d %H:%M')}] TRAIL SHORT SL -> {pos.stop_px:,.4f}")
+                event = f"[{ts.strftime('%Y-%m-%d %H:%M')}] TRAIL SHORT SL -> {pos.stop_px:,.4f}"
+                events.append(event)
+                emit_progress(message="Updated trailing stop.", event=event)
 
     def maybe_exit_for_stop_target(ts: pd.Timestamp, raw_open: float, raw_high: float, raw_low: float) -> bool:
         if pos.side == LONG:
@@ -308,8 +591,8 @@ def run_backtest(bars: pd.DataFrame, frame: pd.DataFrame, ctx: StrategyContext, 
                 return True
         return False
 
-    rows = list(data.iterrows())
     for i, (ts, row) in enumerate(rows):
+        bar_cursor = i
         closed_this_bar = False
         raw_open = float(row["Open"])
         raw_high = float(row["High"])
@@ -386,6 +669,8 @@ def run_backtest(bars: pd.DataFrame, frame: pd.DataFrame, ctx: StrategyContext, 
                     add_skip(ts, side, "no_next_bar", "No next candle available for next-open fill.")
 
         mark_equity(ts, raw_close)
+        if i == 0 or i == len(rows) - 1 or i % max(1, len(rows) // 100) == 0:
+            emit_progress(message=f"Processed {i + 1}/{len(rows)} bars.")
 
     if cfg.finalize_open_trade and pos.side != FLAT:
         last_ts, last_row = rows[-1]
@@ -403,6 +688,7 @@ def run_backtest(bars: pd.DataFrame, frame: pd.DataFrame, ctx: StrategyContext, 
     summary["skipped_signals"] = sum(skip_counts.values())
     summary["skip_counts"] = dict(sorted(skip_counts.items()))
     summary["max_leverage"] = cfg.leverage
+    summary["ai_verified_trades"] = sum(1 for t in trades if t.get("ai_confidence") is not None)
 
     return {
         "ok": True,
@@ -429,6 +715,9 @@ def run_backtest(bars: pd.DataFrame, frame: pd.DataFrame, ctx: StrategyContext, 
             "notional": pos.notional,
             "leverage_used": pos.leverage_used,
             "max_leverage": cfg.leverage,
+            "ai_confidence": pos.ai_confidence,
+            "ai_reason": pos.ai_reason,
+            "ai_model": pos.ai_model,
         },
     }
 

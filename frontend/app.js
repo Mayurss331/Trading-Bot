@@ -71,6 +71,8 @@ const state = {
   builtinBacktestStrategies: [],
   selectedCustomStrategyId: null,
   lastBacktestRunId: null,
+  activeBacktestJobId: null,
+  backtestJobTimer: null,
 };
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -207,6 +209,9 @@ const el = {
   btSameBarPriority: $('btSameBarPriority'),
   btAllowShorts: $('btAllowShorts'),
   btFinalizeOpen: $('btFinalizeOpen'),
+  btAiVerify: $('btAiVerify'),
+  btAiMinConfidence: $('btAiMinConfidence'),
+  btAiCandles: $('btAiCandles'),
   runBacktestBtn: $('runBacktestBtn'),
   backtestStatus: $('backtestStatus'),
   backtestSummary: $('backtestSummary'),
@@ -1757,30 +1762,121 @@ function backtestRequestPayload() {
     opposite_signal_mode: el.btOppositeMode?.value || 'ignore',
     same_bar_priority: el.btSameBarPriority?.value || 'stop_first',
     finalize_open_trade: Boolean(el.btFinalizeOpen?.checked),
+    ai_verification_enabled: Boolean(el.btAiVerify?.checked),
+    ai_min_confidence: parseFloat(el.btAiMinConfidence?.value || '70'),
+    ai_candles: parseInt(el.btAiCandles?.value || '80', 10),
   };
 }
 
-async function runBacktest() {
-  const btn = el.runBacktestBtn;
-  if (btn) { btn.disabled = true; btn.textContent = 'Running...'; }
-  setBacktestStatus('Running...', '');
+function setBacktestButtonRunning(running) {
+  if (!el.runBacktestBtn) return;
+  el.runBacktestBtn.disabled = Boolean(running);
+  el.runBacktestBtn.textContent = running ? 'Running...' : 'Run Backtest';
+}
+
+function stopBacktestPolling() {
+  if (state.backtestJobTimer) {
+    clearTimeout(state.backtestJobTimer);
+    state.backtestJobTimer = null;
+  }
+}
+
+function renderBacktestJob(job) {
+  const pct = Math.max(0, Math.min(100, Math.round((parseFloat(job.progress || 0)) * 100)));
+  const stats = job.stats || {};
+  const stage = job.stage || job.status || 'running';
+  const statusType = job.status === 'failed' ? 'err' : (job.status === 'completed' ? 'ok' : '');
+  setBacktestStatus(`${pct}% · ${stage} · ${job.message || 'Running backtest.'}`, statusType);
+
+  if (el.backtestSummary) {
+    const barsDone = stats.bars_done != null && stats.bars_total != null
+      ? `${stats.bars_done}/${stats.bars_total}`
+      : (stats.bars_total ?? '—');
+    const cells = [
+      ['Stage', stage],
+      ['Progress', `${pct}%`],
+      ['Bars', barsDone],
+      ['Trades', stats.trades ?? '—'],
+      ['Skipped', stats.skipped ?? '—'],
+      ['AI Checks', stats.ai_checks ?? 0],
+      ['AI Pass', stats.ai_approved ?? 0],
+    ];
+    el.backtestSummary.innerHTML = cells.map(([k, v]) => `<div class="bt-stat"><span>${k}</span><strong>${escapeHtml(String(v))}</strong></div>`).join('');
+  }
+
+  if (el.backtestEvents) {
+    const events = job.events || [];
+    if (events.length) {
+      el.backtestEvents.innerHTML = events.slice().reverse().slice(0, 35).map(e => `<div>${escapeHtml(e)}</div>`).join('');
+    } else {
+      el.backtestEvents.innerHTML = `<div>${escapeHtml(job.message || 'Queued')}</div>`;
+    }
+  }
+}
+
+async function pollBacktestJob(jobId) {
+  if (!jobId || state.activeBacktestJobId !== jobId) return;
   try {
-    const res = await fetch('/api/backtests/run', {
+    const res = await fetch(`/api/backtests/jobs/${jobId}`);
+    const job = await res.json();
+    if (!job.ok) {
+      setBacktestStatus(job.message || 'Backtest job not found.', 'err');
+      setBacktestButtonRunning(false);
+      state.activeBacktestJobId = null;
+      return;
+    }
+    renderBacktestJob(job);
+    if (job.status === 'completed' && job.result) {
+      renderBacktestResult(job.result);
+      setBacktestStatus(`Run #${job.result.run_id}`, 'ok');
+      setBacktestButtonRunning(false);
+      state.activeBacktestJobId = null;
+      stopBacktestPolling();
+      return;
+    }
+    if (job.status === 'failed') {
+      setBacktestStatus(job.error || job.message || 'Backtest failed.', 'err');
+      setBacktestButtonRunning(false);
+      state.activeBacktestJobId = null;
+      stopBacktestPolling();
+      return;
+    }
+    state.backtestJobTimer = setTimeout(() => pollBacktestJob(jobId), job.stage === 'ai_verification' ? 1200 : 800);
+  } catch (err) {
+    setBacktestStatus('Network error while checking backtest progress.', 'err');
+    setBacktestButtonRunning(false);
+    state.activeBacktestJobId = null;
+    stopBacktestPolling();
+  }
+}
+
+async function runBacktest() {
+  stopBacktestPolling();
+  state.activeBacktestJobId = null;
+  setBacktestButtonRunning(true);
+  setBacktestStatus('Starting...', '');
+  if (el.backtestTradesBody) {
+    el.backtestTradesBody.innerHTML = '<tr><td colspan="7" class="empty-row">Backtest running...</td></tr>';
+  }
+  if (el.backtestEvents) el.backtestEvents.innerHTML = '<div>Queued</div>';
+  try {
+    const res = await fetch('/api/backtests/run/start', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(backtestRequestPayload()),
     });
     const data = await res.json();
     if (!data.ok) {
-      setBacktestStatus(data.message || 'Backtest failed.', 'err');
+      setBacktestStatus(data.message || 'Backtest failed to start.', 'err');
+      setBacktestButtonRunning(false);
       return;
     }
-    renderBacktestResult(data);
-    setBacktestStatus(`Run #${data.run_id}`, 'ok');
+    state.activeBacktestJobId = data.job_id;
+    renderBacktestJob(data);
+    pollBacktestJob(data.job_id);
   } catch (err) {
-    setBacktestStatus('Network error while running backtest.', 'err');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Run Backtest'; }
+    setBacktestStatus('Network error while starting backtest.', 'err');
+    setBacktestButtonRunning(false);
   }
 }
 
@@ -1797,12 +1893,16 @@ function renderBacktestResult(data) {
       ['Trades', s.trades ?? '—'],
       ['Skipped', s.skipped_signals ?? 0],
     ];
+    if (data.config?.ai_verification_enabled || s.ai_verified_trades) {
+      cells.push(['AI Verified', s.ai_verified_trades ?? 0]);
+    }
     el.backtestSummary.innerHTML = cells.map(([k, v]) => `<div class="bt-stat"><span>${k}</span><strong>${v}</strong></div>`).join('');
   }
   if (el.backtestTradesBody) {
     const trades = data.trades || [];
     el.backtestTradesBody.innerHTML = trades.length ? trades.slice().reverse().map((t, i) => {
       const pnl = parseFloat(t.net_pnl || 0);
+      const ai = t.ai_confidence != null ? ` · AI ${parseFloat(t.ai_confidence).toFixed(1)}%` : '';
       return `<tr>
         <td>${trades.length - i}</td>
         <td class="${t.side === 'LONG' ? 'bull' : 'bear'}">${t.side || '—'}</td>
@@ -1810,7 +1910,7 @@ function renderBacktestResult(data) {
         <td>${fmtTs(t.exit_ts)}</td>
         <td class="mono">${fmtReportNum(t.qty, 8)}</td>
         <td class="${pnl >= 0 ? 'bull' : 'bear'} mono">${pnl >= 0 ? '+' : ''}${fmtReportNum(pnl, 4)}</td>
-        <td>${escapeHtml(t.exit_reason || '—')}${t.leverage_used ? ` · ${parseFloat(t.leverage_used).toFixed(2)}x` : ''}</td>
+        <td>${escapeHtml(t.exit_reason || '—')}${t.leverage_used ? ` · ${parseFloat(t.leverage_used).toFixed(2)}x` : ''}${ai}</td>
       </tr>`;
     }).join('') : '<tr><td colspan="7" class="empty-row">No trades generated.</td></tr>';
   }

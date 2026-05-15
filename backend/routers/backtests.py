@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import csv
 import io
 from datetime import datetime
@@ -11,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from backend.backtesting.config import BacktestConfig
+from backend.backtesting.jobs import complete_job, create_job, fail_job, job_payload, update_job
 from backend.backtesting.service import get_backtest_run, run_and_store_backtest, validate_custom_strategy
 from backend.backtesting.strategy_loader import validate_slug
 from backend.db.database import AsyncSessionLocal
@@ -58,6 +60,10 @@ class BacktestRequest(BaseModel):
     opposite_signal_mode: str = "ignore"
     same_bar_priority: str = "stop_first"
     finalize_open_trade: bool = True
+    ai_verification_enabled: bool = False
+    ai_min_confidence: float = 70
+    ai_candles: int = 80
+    ai_model: str = "gpt-5.4-mini"
     limit: int | None = None
 
 
@@ -202,6 +208,44 @@ async def run_backtest(body: BacktestRequest) -> JSONResponse:
     return JSONResponse(clean(result), status_code=200 if result.get("ok") else 400)
 
 
+async def _run_backtest_job(job_id: str, cfg: BacktestConfig) -> None:
+    update_job(job_id, status="running", stage="starting", progress=0.01, message="Starting backtest.")
+
+    def progress_cb(update: dict) -> None:
+        update_job(
+            job_id,
+            stage=str(update.get("stage") or "running"),
+            progress=float(update.get("progress") or 0.0),
+            message=str(update.get("message") or "Running backtest."),
+            event=update.get("event"),
+            stats=update.get("stats") if isinstance(update.get("stats"), dict) else None,
+        )
+
+    try:
+        result = await run_and_store_backtest(cfg, progress_cb)
+    except Exception as exc:
+        fail_job(job_id, str(exc))
+        return
+    complete_job(job_id, result)
+
+
+@router.post("/run/start")
+async def start_backtest(body: BacktestRequest) -> JSONResponse:
+    payload = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+    cfg = BacktestConfig(**payload).normalized()
+    job = create_job(cfg.to_dict())
+    asyncio.create_task(_run_backtest_job(str(job["job_id"]), cfg))
+    return JSONResponse(job, status_code=202)
+
+
+@router.get("/jobs/{job_id}")
+async def get_backtest_job(job_id: str) -> JSONResponse:
+    job = job_payload(job_id)
+    if job is None:
+        return JSONResponse({"ok": False, "message": "Backtest job not found."}, status_code=404)
+    return JSONResponse(job)
+
+
 @router.get("/runs")
 async def list_runs(limit: int = 25) -> JSONResponse:
     limit = max(1, min(limit, 100))
@@ -255,7 +299,23 @@ async def export_trades(run_id: int):
         rows = result.scalars().all()
     if not rows:
         return JSONResponse({"ok": False, "message": "No trades found for this run."}, status_code=404)
-    fields = ["side", "entry_ts", "exit_ts", "entry_px", "exit_px", "qty", "gross_pnl", "fees", "net_pnl", "return_pct", "r_multiple", "exit_reason"]
+    fields = [
+        "side",
+        "entry_ts",
+        "exit_ts",
+        "entry_px",
+        "exit_px",
+        "qty",
+        "gross_pnl",
+        "fees",
+        "net_pnl",
+        "return_pct",
+        "r_multiple",
+        "exit_reason",
+        "ai_confidence",
+        "ai_model",
+        "ai_reason",
+    ]
     return _csv_response(
         f"backtest_{run_id}_trades.csv",
         [
@@ -272,6 +332,9 @@ async def export_trades(run_id: int):
                 "return_pct": r.return_pct,
                 "r_multiple": r.r_multiple,
                 "exit_reason": r.exit_reason,
+                "ai_confidence": (r.payload or {}).get("ai_confidence"),
+                "ai_model": (r.payload or {}).get("ai_model"),
+                "ai_reason": (r.payload or {}).get("ai_reason"),
             }
             for r in rows
         ],
