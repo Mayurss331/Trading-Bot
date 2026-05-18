@@ -12,6 +12,7 @@ from . import (
     mean_reversion,
     mixed_consensus,
     pairs_stat_arb,
+    precision_momentum,
     trend_following,
     volatility_squeeze,
 )
@@ -22,40 +23,43 @@ StrategyFn = Callable[[pd.DataFrame, StrategyContext], dict]
 
 # Sorted alphabetically by strategy ID
 STRATEGIES: dict[str, StrategyFn] = {
-    arbitrage.META.id: arbitrage.analyze,
-    confluence.META.id: confluence.analyze,
-    daily_sweep.META.id: daily_sweep.analyze,
-    funding_basis.META.id: funding_basis.analyze,
-    mean_reversion.META.id: mean_reversion.analyze,
-    mixed_consensus.META.id: mixed_consensus.analyze,
-    pairs_stat_arb.META.id: pairs_stat_arb.analyze,
-    trend_following.META.id: trend_following.analyze,
-    volatility_squeeze.META.id: volatility_squeeze.analyze,
+    arbitrage.META.id:           arbitrage.analyze,
+    confluence.META.id:          confluence.analyze,
+    daily_sweep.META.id:         daily_sweep.analyze,
+    funding_basis.META.id:       funding_basis.analyze,
+    mean_reversion.META.id:      mean_reversion.analyze,
+    mixed_consensus.META.id:     mixed_consensus.analyze,
+    pairs_stat_arb.META.id:      pairs_stat_arb.analyze,
+    precision_momentum.META.id:  precision_momentum.analyze,
+    trend_following.META.id:     trend_following.analyze,
+    volatility_squeeze.META.id:  volatility_squeeze.analyze,
 }
 
 METAS = {
-    arbitrage.META.id: arbitrage.META,
-    confluence.META.id: confluence.META,
-    daily_sweep.META.id: daily_sweep.META,
-    funding_basis.META.id: funding_basis.META,
-    mean_reversion.META.id: mean_reversion.META,
-    mixed_consensus.META.id: mixed_consensus.META,
-    pairs_stat_arb.META.id: pairs_stat_arb.META,
-    trend_following.META.id: trend_following.META,
-    volatility_squeeze.META.id: volatility_squeeze.META,
+    arbitrage.META.id:           arbitrage.META,
+    confluence.META.id:          confluence.META,
+    daily_sweep.META.id:         daily_sweep.META,
+    funding_basis.META.id:       funding_basis.META,
+    mean_reversion.META.id:      mean_reversion.META,
+    mixed_consensus.META.id:     mixed_consensus.META,
+    pairs_stat_arb.META.id:      pairs_stat_arb.META,
+    precision_momentum.META.id:  precision_momentum.META,
+    trend_following.META.id:     trend_following.META,
+    volatility_squeeze.META.id:  volatility_squeeze.META,
 }
 
 
 CHART_CONFIGS: dict[str, dict] = {
-    arbitrage.META.id:          getattr(arbitrage,         "CHART_CONFIG", DEFAULT_CHART_CONFIG),
-    confluence.META.id:         getattr(confluence,        "CHART_CONFIG", DEFAULT_CHART_CONFIG),
-    daily_sweep.META.id:        getattr(daily_sweep,       "CHART_CONFIG", DEFAULT_CHART_CONFIG),
-    funding_basis.META.id:      getattr(funding_basis,     "CHART_CONFIG", DEFAULT_CHART_CONFIG),
-    mean_reversion.META.id:     getattr(mean_reversion,    "CHART_CONFIG", DEFAULT_CHART_CONFIG),
-    mixed_consensus.META.id:    getattr(mixed_consensus,   "CHART_CONFIG", DEFAULT_CHART_CONFIG),
-    pairs_stat_arb.META.id:     getattr(pairs_stat_arb,    "CHART_CONFIG", DEFAULT_CHART_CONFIG),
-    trend_following.META.id:    getattr(trend_following,   "CHART_CONFIG", DEFAULT_CHART_CONFIG),
-    volatility_squeeze.META.id: getattr(volatility_squeeze,"CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    arbitrage.META.id:           getattr(arbitrage,          "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    confluence.META.id:          getattr(confluence,         "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    daily_sweep.META.id:         getattr(daily_sweep,        "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    funding_basis.META.id:       getattr(funding_basis,      "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    mean_reversion.META.id:      getattr(mean_reversion,     "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    mixed_consensus.META.id:     getattr(mixed_consensus,    "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    pairs_stat_arb.META.id:      getattr(pairs_stat_arb,     "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    precision_momentum.META.id:  getattr(precision_momentum, "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    trend_following.META.id:     getattr(trend_following,    "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    volatility_squeeze.META.id:  getattr(volatility_squeeze, "CHART_CONFIG", DEFAULT_CHART_CONFIG),
 }
 
 

@@ -25,6 +25,7 @@ EXECUTABLE_STRATEGIES = {
     "mean_reversion",
     "mixed_consensus",
     "volatility_squeeze",
+    "precision_momentum",
 }
 SCANNER_ONLY_STRATEGIES = {"arbitrage", "funding_basis", "pairs_stat_arb"}
 
