@@ -390,6 +390,7 @@ function saveDashboardPreferences() {
     trackingActive: state.trackingActive,
     trackerCollapsed: state.trackerCollapsed,
     executionMode: state.realOrdersArmed ? 'real' : 'paper',
+    customStrategyId: state.selectedCustomStrategyId || null,
   };
   try {
     localStorage.setItem(DASHBOARD_PREF_KEY, JSON.stringify({ settings: prefs, savedAt: prefs.savedAt }));
