@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from ..bot_loader import bot, ROOT
 from ..db.database import AsyncSessionLocal
-from ..db.models import CustomStrategy, Trade
+from ..db.models import CustomStrategy, SignalEvent, Trade
 from ..db.persistence import store_signal_event, store_tracker_signal_events, store_trade
 from ..utils import (
     bars_payload,
@@ -506,3 +506,55 @@ async def get_trades(limit: int = 50) -> JSONResponse:
         for t in trades
     ]
     return JSONResponse({"ok": True, "count": len(rows), "trades": rows})
+
+
+@router.get("/api/execution-log")
+async def get_execution_log(limit: int = 60) -> JSONResponse:
+    limit = max(1, min(limit, 200))
+    async with AsyncSessionLocal() as db:
+        sig_result = await db.execute(
+            select(SignalEvent)
+            .where(SignalEvent.action_type.in_(["entry", "exit", "close"]))
+            .order_by(SignalEvent.ts.desc())
+            .limit(limit)
+        )
+        signal_rows = sig_result.scalars().all()
+
+        trade_result = await db.execute(
+            select(Trade).order_by(Trade.exit_ts.desc()).limit(limit)
+        )
+        trade_rows = trade_result.scalars().all()
+
+    events = []
+    for s in signal_rows:
+        events.append({
+            "kind": "signal",
+            "ts": s.ts.isoformat() if s.ts else None,
+            "coin": s.coin,
+            "pair": s.pair,
+            "strategy": s.strategy,
+            "action_type": s.action_type,
+            "side": s.side,
+            "signal": s.signal,
+            "price": s.price,
+            "score": s.score,
+        })
+    for t in trade_rows:
+        ts = t.exit_ts or t.entry_ts
+        side_label = "LONG" if t.side == 1 else "SHORT"
+        pnl = t.pnl
+        events.append({
+            "kind": "trade",
+            "ts": ts.isoformat() if ts else None,
+            "pair": t.pair,
+            "strategy": t.strategy,
+            "execution_mode": t.execution_mode,
+            "side": side_label,
+            "entry_px": t.entry_px,
+            "exit_px": t.exit_px,
+            "pnl": pnl,
+            "exit_reason": t.exit_reason,
+        })
+
+    events.sort(key=lambda e: e.get("ts") or "", reverse=True)
+    return JSONResponse(clean({"ok": True, "events": events[:limit]}))

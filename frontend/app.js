@@ -141,6 +141,7 @@ const el = {
   rankBody:      $('rankBody'),
   chainSelect:   $('chainSelect'),
   journalBody:   $('journalBody'),
+  executionLog:  $('executionLog'),
   refreshJournal:$('refreshJournalButton'),
   pair2:         $('pair2Input'),
   market2:       $('market2Input'),
@@ -1372,6 +1373,56 @@ async function loadTradeJournal() {
   }
 }
 
+// ─── Execution log ────────────────────────────────────────────────────────────
+async function loadExecutionLog() {
+  if (!el.executionLog) return;
+  try {
+    const res = await fetch('/api/execution-log?limit=60');
+    const data = await res.json();
+    const events = data.events || [];
+    if (events.length === 0) {
+      el.executionLog.innerHTML = '<li class="log-entry log-idle">No bot actions yet.</li>';
+      return;
+    }
+    el.executionLog.innerHTML = events.map(ev => {
+      const ts = ev.ts ? new Date(ev.ts).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+      const date = ev.ts ? new Date(ev.ts).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '';
+      if (ev.kind === 'trade') {
+        const pnl = ev.pnl != null ? parseFloat(ev.pnl) : null;
+        const pnlStr = pnl != null ? ` · PnL ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}` : '';
+        const pnlCls = pnl == null ? '' : pnl >= 0 ? 'log-bull' : 'log-bear';
+        const sideCls = ev.side === 'LONG' ? 'log-bull' : 'log-bear';
+        const mode = ev.execution_mode === 'real' ? ' [REAL]' : ' [paper]';
+        const reason = ev.exit_reason ? ` via ${ev.exit_reason}` : '';
+        return `<li class="log-entry log-trade">
+          <span class="log-time">${date} ${ts}</span>
+          <span class="log-badge log-trade-badge">TRADE</span>
+          <span class="${sideCls}">${ev.side}</span>
+          <strong>${ev.pair || '—'}</strong>
+          ${ev.entry_px != null ? `@ ${fmtPrice(ev.entry_px)}` : ''}
+          ${ev.exit_px != null ? `→ ${fmtPrice(ev.exit_px)}` : ''}
+          <span class="${pnlCls}">${pnlStr}</span>
+          <span class="log-meta">${reason}${mode}</span>
+        </li>`;
+      } else {
+        const sideCls = ev.side === 'long' || ev.side === 'LONG' ? 'log-bull' : ev.side === 'short' || ev.side === 'SHORT' ? 'log-bear' : '';
+        const scoreStr = ev.score != null ? ` · score ${ev.score > 0 ? '+' : ''}${ev.score}` : '';
+        const priceStr = ev.price != null ? ` @ ${fmtPrice(ev.price)}` : '';
+        return `<li class="log-entry log-signal">
+          <span class="log-time">${date} ${ts}</span>
+          <span class="log-badge log-signal-badge">${(ev.action_type || 'SIG').toUpperCase()}</span>
+          <span class="${sideCls}">${(ev.side || '').toUpperCase()}</span>
+          <strong>${ev.coin || ev.pair || '—'}</strong>
+          ${priceStr}
+          <span class="log-meta">${ev.signal || ''}${scoreStr}</span>
+        </li>`;
+      }
+    }).join('');
+  } catch {
+    el.executionLog.innerHTML = '<li class="log-entry log-idle">Failed to load execution log.</li>';
+  }
+}
+
 // ─── Volatility scanner ───────────────────────────────────────────────────────
 async function loadVolatilityScan() {
   if (!el.volScanBody || !el.volScanButton) return;
@@ -2384,7 +2435,7 @@ async function clearReportHistory(confirmText = '') {
     hideClearHistoryConfirm();
     setReportsStatus(d.message || 'History cleared.', 'ok');
     showToast(d.message || 'History cleared.', 'ok');
-    await Promise.all([loadReports(), loadTradeJournal()]);
+    await Promise.all([loadReports(), loadTradeJournal(), loadExecutionLog()]);
   } catch (err) {
     setReportsStatus('Network error — could not clear history.', 'err');
     showToast('Network error — could not clear history.', 'err');
@@ -2825,6 +2876,8 @@ async function init() {
   await loadSnapshot();
   loadAccount();
   loadTradeJournal();
+  loadExecutionLog();
+  setInterval(loadExecutionLog, 30_000);
   if (state.trackingActive) {
     startTracking();
     updateTrackedCoinsMenu();

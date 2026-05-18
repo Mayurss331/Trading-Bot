@@ -1904,6 +1904,18 @@ body.drawer-open  { overflow: hidden; }
 .log-list li.success { color: var(--bull);  border-color: var(--bull); }
 .log-list li.error   { color: var(--bear);  border-color: var(--bear); }
 .log-list li.warning { color: var(--amber); border-color: var(--amber); }
+.log-list { max-height: 320px; }
+.log-entry { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px; color: var(--tx-2); }
+.log-trade { border-left-color: var(--blue) !important; }
+.log-signal { border-left-color: var(--amber) !important; }
+.log-idle   { color: var(--tx-4) !important; font-style: italic; }
+.log-time   { color: var(--tx-4); font-size: .62rem; white-space: nowrap; }
+.log-meta   { color: var(--tx-4); font-size: .62rem; }
+.log-badge  { font-size: .6rem; font-weight: 700; letter-spacing: .04em; padding: 1px 4px; border-radius: 3px; }
+.log-trade-badge  { background: color-mix(in srgb, var(--blue) 20%, transparent); color: var(--blue); }
+.log-signal-badge { background: color-mix(in srgb, var(--amber) 20%, transparent); color: var(--amber); }
+.log-bull { color: var(--bull); }
+.log-bear { color: var(--bear); }
 
 /* ─── Toast ──────────────────────────────────────────────────────────────── */
 .toast-msg {
