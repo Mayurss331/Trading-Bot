@@ -14,7 +14,7 @@ from sqlalchemy import select
 
 from ..bot_loader import bot, ROOT
 from ..db.database import AsyncSessionLocal
-from ..db.models import Trade
+from ..db.models import CustomStrategy, Trade
 from ..db.persistence import store_signal_event, store_tracker_signal_events, store_trade
 from ..utils import (
     bars_payload,
@@ -148,6 +148,7 @@ def _sync_build_snapshot(
     pair2: str | None = None, market2: str | None = None,
     timeframe: str | None = None,
     exec_mode: str = "",
+    custom_analyzer=None,
 ) -> dict:
     cfg = make_cfg(pair, market, mode, risk, lookback_days, timeframe=timeframe, exec_mode=exec_mode)
     bars, latest_closed, used_pair, used_source = bot.fetch_closed_bars(
@@ -203,7 +204,8 @@ def _sync_build_snapshot(
             "pair2_bars": pair2_bars,
         },
     )
-    analysis = get_strategy(strategy_id)(bars, ctx)
+    analyzer = custom_analyzer.analyze if custom_analyzer is not None else get_strategy(strategy_id)
+    analysis = analyzer(bars, ctx)
     frame = analysis["frame"]
     meta = analysis["meta"]
     ticker = futures_ticker if mode == "futures" else spot_ticker
@@ -279,6 +281,26 @@ async def health() -> JSONResponse:
     })
 
 
+async def _load_custom_analyzer_for_snapshot(custom_strategy_id: int | None):
+    if not custom_strategy_id:
+        return None
+    from ..backtesting.strategy_loader import compile_custom_strategy
+    try:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(CustomStrategy).where(
+                    CustomStrategy.id == custom_strategy_id,
+                    CustomStrategy.enabled.is_(True),
+                )
+            )
+            row = result.scalar_one_or_none()
+        if row is None:
+            return None
+        return compile_custom_strategy(row)
+    except Exception:
+        return None
+
+
 @router.get("/api/snapshot")
 async def snapshot(
     pair: str = DEFAULT_PAIR,
@@ -292,10 +314,10 @@ async def snapshot(
     market2: str = "",
     timeframe: str = "",
     exec_mode: str = "",
+    custom_strategy_id: int | None = None,
 ) -> JSONResponse:
     if not market:
         market = bot.derive_market_from_pair(pair) or DEFAULT_MARKET
-    strategy_id = normalize_strategy_id(strategy)
     mode = mode.lower() if mode.lower() in {"spot", "margin", "futures"} else "spot"
     lookback_days = max(1, min(lookback_days, 30))
     risk = max(0.01, min(risk, 1_000_000.0))
@@ -303,10 +325,17 @@ async def snapshot(
     limit = _snapshot_bar_limit(lookback_days, bar_minutes, limit)
     exec_mode = exec_mode.lower() if exec_mode.lower() in {"paper", "real"} else ""
 
+    custom_analyzer = await _load_custom_analyzer_for_snapshot(custom_strategy_id)
+    if custom_analyzer is not None:
+        strategy_id = custom_analyzer.id
+    else:
+        strategy_id = normalize_strategy_id(strategy)
+
     result = await asyncio.to_thread(
         _sync_build_snapshot, pair, market, strategy_id, mode, lookback_days, limit, risk,
         pair2=pair2 or None, market2=market2 or None,
         timeframe=tf, exec_mode=exec_mode,
+        custom_analyzer=custom_analyzer,
     )
     payload = clean(result)
     if isinstance(payload, dict):

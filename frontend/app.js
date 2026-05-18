@@ -932,6 +932,7 @@ async function loadSnapshot() {
     if (pair2) url += `&pair2=${encodeURIComponent(pair2)}`;
     if (market2) url += `&market2=${encodeURIComponent(market2)}`;
     url += `&exec_mode=${state.realOrdersArmed ? 'real' : 'paper'}`;
+    if (state.selectedCustomStrategyId) url += `&custom_strategy_id=${state.selectedCustomStrategyId}`;
     const res = await fetch(url);
     data = await res.json();
   } catch (err) {
