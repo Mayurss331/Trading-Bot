@@ -54,6 +54,7 @@ const state = {
   availableCoins: [],
   intelligenceInterval: null,
   lastSnapshot: null,
+  lastChartPair: '',
   realOrdersArmed: false,
   trackingActive: false,
   trackerCollapsed: false,
@@ -64,6 +65,8 @@ const state = {
   fvgHighLine: null,
   fvgLowLine: null,
   sweepMarkers: null,
+  signalMarkers: null,
+  indicatorSeries: {},
   livePositions: [],
   expertPicksInterval: null,
   reportsFilter: 'all',
@@ -586,6 +589,8 @@ function initPriceChart() {
     state.fvgHighLine = null;
     state.fvgLowLine = null;
     state.sweepMarkers = null;
+    state.signalMarkers = null;
+    state.indicatorSeries = {};
   }
   const container = el.priceChart;
   const chart = LightweightCharts.createChart(container, {
@@ -747,6 +752,142 @@ function clearSweepOverlays() {
   }
 }
 
+function _addLineSeries(opts) {
+  if (typeof state.priceChart.addSeries === 'function' && LightweightCharts?.LineSeries) {
+    return state.priceChart.addSeries(LightweightCharts.LineSeries, opts);
+  }
+  return state.priceChart.addLineSeries(opts);
+}
+
+function _removeIndicatorSeries(key) {
+  const s = state.indicatorSeries[key];
+  if (!s) return;
+  try { state.priceChart.removeSeries(s); } catch {}
+  delete state.indicatorSeries[key];
+}
+
+function _clearSignalMarkers() {
+  if (state.signalMarkers) {
+    try { state.signalMarkers.setData([]); } catch {}
+    try { state.candleSeries?.detachPrimitive?.(state.signalMarkers); } catch {}
+    state.signalMarkers = null;
+  } else {
+    try { state.candleSeries?.setMarkers?.([]); } catch {}
+  }
+}
+
+function updateIndicatorOverlays(bars, strategyId) {
+  if (!state.priceChart || !state.candleSeries || !bars || bars.length === 0) return;
+
+  const COLORS = {
+    bull:   cssVar('--bull')   || '#00c896',
+    bear:   cssVar('--bear')   || '#f03858',
+    amber:  cssVar('--amber')  || '#f5a020',
+    blue:   cssVar('--blue')   || '#3a7ef4',
+    violet: cssVar('--violet') || '#7c5cf6',
+  };
+
+  // Skip — sweep has its own overlays
+  if (strategyId === 'daily_sweep') {
+    ['ema_fast', 'ema_slow', 'bb_upper', 'bb_mid', 'bb_lower'].forEach(_removeIndicatorSeries);
+    _clearSignalMarkers();
+    return;
+  }
+
+  const hasFast = bars.some(b => b.ema_fast != null);
+  const hasSlow = bars.some(b => b.ema_slow != null);
+  const hasBB   = bars.some(b => b.bb_upper != null);
+
+  // EMA fast
+  if (hasFast) {
+    if (!state.indicatorSeries.ema_fast) {
+      try {
+        state.indicatorSeries.ema_fast = _addLineSeries({
+          color: COLORS.blue, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: 'EMA F',
+        });
+      } catch {}
+    }
+    const data = bars.filter(b => b.ema_fast != null)
+      .map(b => ({ time: Math.floor(new Date(b.time).getTime() / 1000), value: b.ema_fast }));
+    try { state.indicatorSeries.ema_fast?.setData(data); } catch {}
+  } else {
+    _removeIndicatorSeries('ema_fast');
+  }
+
+  // EMA slow
+  if (hasSlow) {
+    if (!state.indicatorSeries.ema_slow) {
+      try {
+        state.indicatorSeries.ema_slow = _addLineSeries({
+          color: COLORS.amber, lineWidth: 1, priceLineVisible: false, lastValueVisible: false, title: 'EMA S',
+        });
+      } catch {}
+    }
+    const data = bars.filter(b => b.ema_slow != null)
+      .map(b => ({ time: Math.floor(new Date(b.time).getTime() / 1000), value: b.ema_slow }));
+    try { state.indicatorSeries.ema_slow?.setData(data); } catch {}
+  } else {
+    _removeIndicatorSeries('ema_slow');
+  }
+
+  // Bollinger Bands
+  if (hasBB) {
+    const Dashed = LightweightCharts?.LineStyle?.Dashed ?? 2;
+    const bbDefs = [
+      { key: 'bb_upper', col: 'bb_upper', color: COLORS.violet, title: 'BB U' },
+      { key: 'bb_mid',   col: 'bb_mid',   color: COLORS.violet, title: 'BB M' },
+      { key: 'bb_lower', col: 'bb_lower', color: COLORS.violet, title: 'BB L' },
+    ];
+    for (const def of bbDefs) {
+      if (!state.indicatorSeries[def.key]) {
+        try {
+          state.indicatorSeries[def.key] = _addLineSeries({
+            color: def.color, lineWidth: 1, lineStyle: Dashed,
+            priceLineVisible: false, lastValueVisible: false, title: def.title,
+          });
+        } catch {}
+      }
+      const data = bars.filter(b => b[def.col] != null)
+        .map(b => ({ time: Math.floor(new Date(b.time).getTime() / 1000), value: b[def.col] }));
+      try { state.indicatorSeries[def.key]?.setData(data); } catch {}
+    }
+  } else {
+    ['bb_upper', 'bb_mid', 'bb_lower'].forEach(_removeIndicatorSeries);
+  }
+
+  // Signal markers: entry arrows + exit circles
+  const markers = [];
+  for (const b of bars) {
+    const t = Math.floor(new Date(b.time).getTime() / 1000);
+    if (b.entry_side != null && b.entry_side !== 0) {
+      const isLong = b.entry_side > 0;
+      markers.push({
+        time: t,
+        position: isLong ? 'belowBar' : 'aboveBar',
+        color: isLong ? COLORS.bull : COLORS.bear,
+        shape: isLong ? 'arrowUp' : 'arrowDown',
+        text: isLong ? 'BUY' : 'SELL',
+      });
+    }
+    if (b.exit_long) {
+      markers.push({ time: t, position: 'aboveBar', color: COLORS.amber, shape: 'circle', text: 'XL' });
+    }
+    if (b.exit_short) {
+      markers.push({ time: t, position: 'belowBar', color: COLORS.amber, shape: 'circle', text: 'XS' });
+    }
+  }
+  markers.sort((a, b) => a.time - b.time);
+
+  _clearSignalMarkers();
+  if (markers.length > 0) {
+    if (typeof LightweightCharts?.createSeriesMarkers === 'function') {
+      state.signalMarkers = LightweightCharts.createSeriesMarkers(state.candleSeries, markers);
+    } else {
+      try { state.candleSeries.setMarkers(markers); } catch {}
+    }
+  }
+}
+
 function updateSweepOverlays(bars, strategyId, indicators) {
   clearSweepOverlays();
   if (strategyId !== 'daily_sweep' || !state.candleSeries) return;
@@ -821,6 +962,12 @@ function updatePriceChart(bars) {
 
   try { state.candleSeries.setData(candles); } catch {}
   try { state.superSeries.setData(supertrend); } catch {}
+
+  const currentPair = el.pair?.value || '';
+  if (currentPair !== state.lastChartPair) {
+    state.lastChartPair = currentPair;
+    try { state.priceChart.timeScale().fitContent(); } catch {}
+  }
 }
 
 // ─── Score chart (custom canvas) ─────────────────────────────────────────────
@@ -1000,6 +1147,7 @@ async function loadSnapshot() {
   updatePriceChart(bars);
   updatePositionLines(stateData);
   updateSweepOverlays(bars, data.strategy?.id, data.indicators);
+  updateIndicatorOverlays(bars, data.strategy?.id);
   drawScoreChart(bars);
   drawRsiChart(bars);
 
