@@ -443,6 +443,7 @@ async function applyDashboardPreferences() {
   setValue(el.pair, prefs.pair);
   setValue(el.market, prefs.market);
   setValue(el.strategy, normalizeStrategy(prefs.strategy));
+  _syncCustomStrategyFromDropdown();
   setValue(el.mode, prefs.mode);
   setValue(el.risk, prefs.risk);
   setValue(el.lookback, prefs.lookback);
@@ -1580,16 +1581,47 @@ function applySelectOptions(selectEl, options, currentValue, fallbackValue) {
 
 async function loadStrategies() {
   try {
-    const res = await fetch('/api/strategies');
+    const res = await fetch('/api/backtests/strategies');
     const data = await res.json();
     if (!data.ok) return;
-    const strategies = (data.strategies || [])
-      .map(s => ({ value: s.id, label: s.name || s.id }));
-    if (!strategies.length) return;
     const pref = readDashboardPreferences();
-    applySelectOptions(el.strategy, strategies, pref.strategy, DEFAULT_STRATEGY);
+    const desired = pref.strategy || DEFAULT_STRATEGY;
+
+    const builtinOpts = (data.builtins || [])
+      .map(s => `<option value="${s.id}">${s.name || s.id}</option>`)
+      .join('');
+
+    const customRows = (data.custom || []).filter(s => s.enabled);
+    const customOpts = customRows
+      .map(s => `<option value="custom:${s.id}">${s.title || s.slug}</option>`)
+      .join('');
+
+    if (!builtinOpts) return;
+
+    el.strategy.innerHTML = `<optgroup label="Built-in">${builtinOpts}</optgroup>` +
+      (customOpts ? `<optgroup label="Custom">${customOpts}</optgroup>` : '');
+
+    // Restore saved selection
+    const allValues = new Set([
+      ...(data.builtins || []).map(s => s.id),
+      ...customRows.map(s => `custom:${s.id}`),
+    ]);
+    el.strategy.value = allValues.has(desired) ? desired : DEFAULT_STRATEGY;
+
+    // Sync custom strategy state from dropdown
+    _syncCustomStrategyFromDropdown();
   } catch (err) {
     console.error('Failed to load strategies', err);
+  }
+}
+
+function _syncCustomStrategyFromDropdown() {
+  const val = el.strategy?.value || '';
+  if (val.startsWith('custom:')) {
+    const id = parseInt(val.slice(7), 10);
+    state.selectedCustomStrategyId = isNaN(id) ? null : id;
+  } else {
+    state.selectedCustomStrategyId = null;
   }
 }
 
@@ -2618,6 +2650,7 @@ function wireEvents() {
     });
   }
   el.strategy.addEventListener('change', () => {
+    _syncCustomStrategyFromDropdown();
     saveDashboardPreferences();
     togglePair2Fields();
     loadSnapshot();
