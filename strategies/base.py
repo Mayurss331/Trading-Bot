@@ -31,6 +31,13 @@ class StrategyContext:
     extras: dict[str, Any]
 
 
+DEFAULT_CHART_CONFIG: dict = {
+    "overlays": ["ema", "bb", "supertrend"],
+    "signals": True,
+    "extra_cols": [],
+}
+
+
 @dataclass(frozen=True)
 class StrategyMeta:
     id: str

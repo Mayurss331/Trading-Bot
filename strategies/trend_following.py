@@ -14,6 +14,12 @@ META = StrategyMeta(
     score_label="Trend Score",
 )
 
+CHART_CONFIG = {
+    "overlays": ["ema", "supertrend"],
+    "signals": True,
+    "extra_cols": [],
+}
+
 
 def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
     frame = base_frame(bars)

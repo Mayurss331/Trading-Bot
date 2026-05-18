@@ -19,6 +19,12 @@ META = StrategyMeta(
     score_label="Squeeze Score",
 )
 
+CHART_CONFIG = {
+    "overlays": ["bb"],
+    "signals": True,
+    "extra_cols": [],
+}
+
 MIN_BARS = 120
 
 

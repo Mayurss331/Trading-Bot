@@ -14,6 +14,12 @@ META = StrategyMeta(
     score_label="Reversion Score",
 )
 
+CHART_CONFIG = {
+    "overlays": ["bb"],
+    "signals": True,
+    "extra_cols": [],
+}
+
 
 def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
     frame = base_frame(bars)

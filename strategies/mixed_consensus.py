@@ -19,6 +19,12 @@ META = StrategyMeta(
     score_label="Vote Delta",
 )
 
+CHART_CONFIG = {
+    "overlays": ["supertrend"],
+    "signals": True,
+    "extra_cols": [],
+}
+
 # Child strategy IDs (must be directional, not scanners)
 ELIGIBLE_IDS = ["confluence", "trend_following", "mean_reversion", "volatility_squeeze"]
 

@@ -15,6 +15,12 @@ META = StrategyMeta(
 )
 
 
+CHART_CONFIG = {
+    "overlays": ["sweep"],
+    "signals": False,
+    "extra_cols": [],
+}
+
 PIVOT_LEFT = 2
 PIVOT_RIGHT = 2
 RETRACE_ATR = 0.5

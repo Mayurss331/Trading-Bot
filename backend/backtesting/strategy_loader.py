@@ -11,7 +11,8 @@ import pandas as pd
 
 from backend.db.models import CustomStrategy
 from strategies.base import StrategyContext, StrategyMeta, base_frame, finalize
-from strategies.registry import METAS, get_strategy, normalize_strategy_id
+from strategies.base import DEFAULT_CHART_CONFIG
+from strategies.registry import CHART_CONFIGS, METAS, get_strategy, normalize_strategy_id
 
 
 SLUG_RE = re.compile(r"^[A-Za-z0-9_]{3,64}$")
@@ -39,6 +40,11 @@ class LoadedStrategy:
     custom_strategy_id: int | None
     code_snapshot: str | None
     analyze: Callable[[pd.DataFrame, StrategyContext], dict]
+    chart_config: dict = None  # type: ignore[assignment]
+
+    def __post_init__(self):
+        if self.chart_config is None:
+            object.__setattr__(self, "chart_config", dict(DEFAULT_CHART_CONFIG))
 
 
 def validate_slug(slug: str) -> str:
@@ -114,6 +120,17 @@ def _normalize_custom_result(result: dict, meta: StrategyMeta, bars: pd.DataFram
     return finalize(meta, frame, ctx)
 
 
+def _validate_chart_config(raw: object) -> dict:
+    """Sanitize a CHART_CONFIG from a strategy module."""
+    if not isinstance(raw, dict):
+        return dict(DEFAULT_CHART_CONFIG)
+    valid_overlays = {"ema", "bb", "supertrend", "sweep"}
+    overlays = [o for o in (raw.get("overlays") or []) if isinstance(o, str) and o in valid_overlays]
+    signals = bool(raw.get("signals", True))
+    extra_cols = [c for c in (raw.get("extra_cols") or []) if isinstance(c, str) and c.isidentifier()][:20]
+    return {"overlays": overlays, "signals": signals, "extra_cols": extra_cols}
+
+
 def compile_custom_strategy(row: CustomStrategy) -> LoadedStrategy:
     slug = validate_slug(row.slug)
     code = row.code or ""
@@ -156,6 +173,9 @@ def compile_custom_strategy(row: CustomStrategy) -> LoadedStrategy:
         result = analyze(bars, ctx)
         return _normalize_custom_result(result, meta, bars, ctx)
 
+    raw_cfg = module.__dict__.get("CHART_CONFIG")
+    chart_config = _validate_chart_config(raw_cfg)
+
     return LoadedStrategy(
         id=slug,
         title=row.title,
@@ -164,6 +184,7 @@ def compile_custom_strategy(row: CustomStrategy) -> LoadedStrategy:
         custom_strategy_id=row.id,
         code_snapshot=code,
         analyze=wrapped,
+        chart_config=chart_config,
     )
 
 
@@ -178,4 +199,5 @@ def load_builtin_strategy(strategy_id: str) -> LoadedStrategy:
         custom_strategy_id=None,
         code_snapshot=None,
         analyze=get_strategy(normalized),
+        chart_config=CHART_CONFIGS.get(normalized, DEFAULT_CHART_CONFIG),
     )

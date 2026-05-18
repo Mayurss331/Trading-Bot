@@ -41,7 +41,7 @@ def _env_int(name: str, default: int) -> int:
 # Strategies loaded once at module level
 sys.path.insert(0, str(ROOT))
 from strategies.base import StrategyContext  # noqa: E402
-from strategies.registry import get_strategy, list_strategies, normalize_strategy_id  # noqa: E402
+from strategies.registry import get_chart_config, get_strategy, list_strategies, normalize_strategy_id  # noqa: E402
 
 router = APIRouter(tags=["snapshot"])
 
@@ -205,6 +205,11 @@ def _sync_build_snapshot(
         },
     )
     analyzer = custom_analyzer.analyze if custom_analyzer is not None else get_strategy(strategy_id)
+    chart_config = (
+        custom_analyzer.chart_config
+        if custom_analyzer is not None and hasattr(custom_analyzer, "chart_config")
+        else get_chart_config(strategy_id)
+    )
     analysis = analyzer(bars, ctx)
     frame = analysis["frame"]
     meta = analysis["meta"]
@@ -229,6 +234,7 @@ def _sync_build_snapshot(
             "score_label": meta.score_label,
             "reason": analysis.get("reason"),
             "notes": analysis.get("notes", []),
+            "chart_config": chart_config,
         },
         "used_pair": used_pair,
         "used_source": used_source,
@@ -257,7 +263,10 @@ def _sync_build_snapshot(
             extra_cols=(
                 ["phase", "fvg_low", "fvg_high", "entry_side", "bias", "bos", "sweep", "choch"]
                 if strategy_id == "daily_sweep"
-                else ["entry_side", "exit_long", "exit_short"]
+                else list(dict.fromkeys(
+                    ["entry_side", "exit_long", "exit_short"]
+                    + (chart_config.get("extra_cols") or [])
+                ))
             ),
         ),
     }

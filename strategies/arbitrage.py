@@ -16,6 +16,12 @@ META = StrategyMeta(
     score_label="Spread bps",
 )
 
+CHART_CONFIG = {
+    "overlays": [],
+    "signals": False,
+    "extra_cols": [],
+}
+
 
 def _price(row: dict[str, Any] | None) -> float | None:
     if not row:

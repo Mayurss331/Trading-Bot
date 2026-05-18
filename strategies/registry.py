@@ -15,7 +15,7 @@ from . import (
     trend_following,
     volatility_squeeze,
 )
-from .base import StrategyContext
+from .base import DEFAULT_CHART_CONFIG, StrategyContext
 
 
 StrategyFn = Callable[[pd.DataFrame, StrategyContext], dict]
@@ -46,12 +46,29 @@ METAS = {
 }
 
 
+CHART_CONFIGS: dict[str, dict] = {
+    arbitrage.META.id:          getattr(arbitrage,         "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    confluence.META.id:         getattr(confluence,        "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    daily_sweep.META.id:        getattr(daily_sweep,       "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    funding_basis.META.id:      getattr(funding_basis,     "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    mean_reversion.META.id:     getattr(mean_reversion,    "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    mixed_consensus.META.id:    getattr(mixed_consensus,   "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    pairs_stat_arb.META.id:     getattr(pairs_stat_arb,    "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    trend_following.META.id:    getattr(trend_following,   "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    volatility_squeeze.META.id: getattr(volatility_squeeze,"CHART_CONFIG", DEFAULT_CHART_CONFIG),
+}
+
+
 def get_strategy(strategy_id: str) -> StrategyFn:
     return STRATEGIES.get(strategy_id, STRATEGIES["confluence"])
 
 
 def normalize_strategy_id(strategy_id: str) -> str:
     return strategy_id if strategy_id in STRATEGIES else "confluence"
+
+
+def get_chart_config(strategy_id: str) -> dict:
+    return CHART_CONFIGS.get(strategy_id, DEFAULT_CHART_CONFIG)
 
 
 def list_strategies() -> list[dict]:
@@ -62,6 +79,7 @@ def list_strategies() -> list[dict]:
             "description": meta.description,
             "chart_label": meta.chart_label,
             "score_label": meta.score_label,
+            "chart_config": CHART_CONFIGS.get(meta.id, DEFAULT_CHART_CONFIG),
         }
         for meta in METAS.values()
     ]

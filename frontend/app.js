@@ -777,8 +777,11 @@ function _clearSignalMarkers() {
   }
 }
 
-function updateIndicatorOverlays(bars, strategyId) {
+function updateIndicatorOverlays(bars, strategyId, chartConfig) {
   if (!state.priceChart || !state.candleSeries || !bars || bars.length === 0) return;
+
+  const overlays = Array.isArray(chartConfig?.overlays) ? chartConfig.overlays : ['ema', 'bb', 'supertrend'];
+  const showSignals = chartConfig?.signals !== false;
 
   const COLORS = {
     bull:   cssVar('--bull')   || '#00c896',
@@ -788,16 +791,19 @@ function updateIndicatorOverlays(bars, strategyId) {
     violet: cssVar('--violet') || '#7c5cf6',
   };
 
-  // Skip — sweep has its own overlays
-  if (strategyId === 'daily_sweep') {
+  // daily_sweep manages its own overlays via updateSweepOverlays
+  if (strategyId === 'daily_sweep' || overlays.includes('sweep')) {
     ['ema_fast', 'ema_slow', 'bb_upper', 'bb_mid', 'bb_lower'].forEach(_removeIndicatorSeries);
     _clearSignalMarkers();
     return;
   }
 
-  const hasFast = bars.some(b => b.ema_fast != null);
-  const hasSlow = bars.some(b => b.ema_slow != null);
-  const hasBB   = bars.some(b => b.bb_upper != null);
+  const wantEma = overlays.includes('ema');
+  const wantBB  = overlays.includes('bb');
+
+  const hasFast = wantEma && bars.some(b => b.ema_fast != null);
+  const hasSlow = wantEma && bars.some(b => b.ema_slow != null);
+  const hasBB   = wantBB  && bars.some(b => b.bb_upper != null);
 
   // EMA fast
   if (hasFast) {
@@ -857,6 +863,7 @@ function updateIndicatorOverlays(bars, strategyId) {
   }
 
   // Signal markers: entry arrows + exit circles
+  if (!showSignals) { _clearSignalMarkers(); return; }
   const markers = [];
   for (const b of bars) {
     const t = Math.floor(new Date(b.time).getTime() / 1000);
@@ -1148,7 +1155,7 @@ async function loadSnapshot() {
   updatePriceChart(bars);
   updatePositionLines(stateData);
   updateSweepOverlays(bars, data.strategy?.id, data.indicators);
-  updateIndicatorOverlays(bars, data.strategy?.id);
+  updateIndicatorOverlays(bars, data.strategy?.id, data.strategy?.chart_config);
   drawScoreChart(bars);
   drawRsiChart(bars);
 

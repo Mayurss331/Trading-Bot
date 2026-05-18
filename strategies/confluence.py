@@ -13,6 +13,12 @@ META = StrategyMeta(
     score_label="Confluence Score",
 )
 
+CHART_CONFIG = {
+    "overlays": ["ema", "bb", "supertrend"],
+    "signals": True,
+    "extra_cols": [],
+}
+
 
 def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
     frame = base_frame(bars)
