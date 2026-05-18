@@ -146,7 +146,7 @@ def _execute_one(coin: str, strategy_id: str, risk: float, lookback_days: int, t
         if strategy_id not in EXECUTABLE_STRATEGIES:
             return [f"{pair}: background executor skipped scanner-only strategy {strategy_id}."]
 
-    cfg = make_cfg(pair, market, "futures", risk, lookback_days, timeframe=timeframe, exec_mode=exec_mode)
+    cfg = make_cfg(pair, market, "futures", risk, lookback_days, timeframe=timeframe, exec_mode=exec_mode, strategy=strategy_id)
     cfg.allow_shorts = _env_bool("BACKGROUND_ALLOW_SHORTS", False)
 
     slot = _EXECUTION_STATE.setdefault(pair, {"state": bot.TradeState(), "last_ts": None})

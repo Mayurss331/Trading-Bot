@@ -150,7 +150,7 @@ def _sync_build_snapshot(
     exec_mode: str = "",
     custom_analyzer=None,
 ) -> dict:
-    cfg = make_cfg(pair, market, mode, risk, lookback_days, timeframe=timeframe, exec_mode=exec_mode)
+    cfg = make_cfg(pair, market, mode, risk, lookback_days, timeframe=timeframe, exec_mode=exec_mode, strategy=strategy_id)
     bars, latest_closed, used_pair, used_source = bot.fetch_closed_bars(
         cfg.pair,
         cfg.market,

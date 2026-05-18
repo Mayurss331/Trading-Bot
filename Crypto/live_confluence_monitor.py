@@ -144,6 +144,7 @@ class RuntimeConfig:
     data_source: str | None = None
     api_key: str | None = None
     api_secret: str | None = None
+    strategy: str | None = None
 
 
 @dataclass
@@ -1789,7 +1790,7 @@ def _exit_trade(state: TradeState, ts: pd.Timestamp, exit_px: float, reason: str
         "pnl": pnl,
         "exit_reason": reason,
         "mode": cfg.execution_mode if cfg else None,
-        "strategy": None,
+        "strategy": cfg.strategy if cfg else None,
         "execution_mode": "real" if (cfg and cfg.place_orders) else "paper",
     })
 
@@ -1846,7 +1847,7 @@ def sync_margin_order_state(ts: pd.Timestamp, state: TradeState, cfg: RuntimeCon
             "pnl": broker_pnl,
             "exit_reason": status.upper(),
             "mode": cfg.execution_mode,
-            "strategy": None,
+            "strategy": cfg.strategy if cfg else None,
             "execution_mode": "real",
         })
         _reset_open_trade_fields(state)
@@ -1896,7 +1897,7 @@ def sync_futures_position_state(ts: pd.Timestamp, state: TradeState, cfg: Runtim
                 "pnl": None,
                 "exit_reason": "BROKER_CLOSE",
                 "mode": cfg.execution_mode,
-                "strategy": None,
+                "strategy": cfg.strategy if cfg else None,
                 "execution_mode": "real" if cfg.place_orders else "paper",
             })
             _reset_open_trade_fields(state)
