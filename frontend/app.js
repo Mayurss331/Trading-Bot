@@ -112,6 +112,13 @@ const el = {
   priceChartTitle: $('priceChartTitle'),
   priceChartSub:   $('priceChartSub'),
   priceChart:    $('priceChart'),
+  chartSubRow:   $('chartSubRow'),
+  scorePanel:    $('scorePanel'),
+  scorePanelTitle: $('scorePanelTitle'),
+  scorePanelSub: $('scorePanelSub'),
+  rsiPanel:      $('rsiPanel'),
+  rsiPanelTitle: $('rsiPanelTitle'),
+  rsiPanelSub:   $('rsiPanelSub'),
   scoreChart:    $('scoreChart'),
   rsiChart:      $('rsiChart'),
   strategyList:  $('strategyList'),
@@ -228,6 +235,11 @@ const el = {
   btAiMinConfidence: $('btAiMinConfidence'),
   btAiCandles: $('btAiCandles'),
   runBacktestBtn: $('runBacktestBtn'),
+  paperStrategySet: $('paperStrategySet'),
+  paperSelectAllBtn: $('paperSelectAllBtn'),
+  paperClearBtn: $('paperClearBtn'),
+  runPaperSetBtn: $('runPaperSetBtn'),
+  paperEvalBody: $('paperEvalBody'),
   backtestStatus: $('backtestStatus'),
   backtestSummary: $('backtestSummary'),
   backtestEquityChart: $('backtestEquityChart'),
@@ -802,6 +814,10 @@ function updateIndicatorOverlays(bars, strategyId, chartConfig) {
   const wantBB  = overlays.includes('bb');
   const wantVP  = overlays.includes('volume_profile');
 
+  if (!overlays.includes('supertrend')) {
+    try { state.superSeries?.setData([]); } catch {}
+  }
+
   const hasFast = wantEma && bars.some(b => b.ema_fast != null);
   const hasSlow = wantEma && bars.some(b => b.ema_slow != null);
   const hasBB   = wantBB  && bars.some(b => b.bb_upper != null);
@@ -893,7 +909,8 @@ function updateIndicatorOverlays(bars, strategyId, chartConfig) {
     ['vp_poc', 'vp_vah', 'vp_val'].forEach(_removeIndicatorSeries);
   }
 
-  // Signal markers: entry arrows + exit circles
+  // Signal markers: entries only. Raw exit flags are often continuous conditions
+  // and clutter the chart; executed exits remain visible in paper/backtest ledgers.
   if (!showSignals) { _clearSignalMarkers(); return; }
   const markers = [];
   for (const b of bars) {
@@ -907,12 +924,6 @@ function updateIndicatorOverlays(bars, strategyId, chartConfig) {
         shape: isLong ? 'arrowUp' : 'arrowDown',
         text: isLong ? 'BUY' : 'SELL',
       });
-    }
-    if (b.exit_long) {
-      markers.push({ time: t, position: 'aboveBar', color: COLORS.amber, shape: 'circle', text: 'XL' });
-    }
-    if (b.exit_short) {
-      markers.push({ time: t, position: 'belowBar', color: COLORS.amber, shape: 'circle', text: 'XS' });
     }
   }
   markers.sort((a, b) => a.time - b.time);
@@ -987,6 +998,9 @@ function updateSweepOverlays(bars, strategyId, indicators) {
 
 function updatePriceChart(bars) {
   if (!state.candleSeries || !bars || bars.length === 0) return;
+  const chartConfig = state.lastSnapshot?.strategy?.chart_config || {};
+  const overlays = Array.isArray(chartConfig.overlays) ? chartConfig.overlays : ['ema', 'bb', 'supertrend'];
+  const showSupertrend = overlays.includes('supertrend');
 
   const candles = bars
     .filter(b => b.open != null && b.high != null && b.low != null && b.close != null)
@@ -995,9 +1009,11 @@ function updatePriceChart(bars) {
       open: b.open, high: b.high, low: b.low, close: b.close,
     }));
 
-  const supertrend = bars
-    .filter(b => b.supertrend != null)
-    .map(b => ({ time: Math.floor(new Date(b.time).getTime() / 1000), value: b.supertrend }));
+  const supertrend = showSupertrend
+    ? bars
+        .filter(b => b.supertrend != null)
+        .map(b => ({ time: Math.floor(new Date(b.time).getTime() / 1000), value: b.supertrend }))
+    : [];
 
   try { state.candleSeries.setData(candles); } catch {}
   try { state.superSeries.setData(supertrend); } catch {}
@@ -1009,9 +1025,48 @@ function updatePriceChart(bars) {
   }
 }
 
+function chartPanelConfig(strategyId) {
+  const hidden = { score: false, rsi: false, scoreTitle: 'Score', scoreSub: 'Strategy signal score', rsiTitle: 'RSI', rsiSub: 'Overbought > 70 · Oversold < 30' };
+  const configs = {
+    arbitrage:         { ...hidden },
+    daily_sweep:       { ...hidden },
+    volume_profile:    { ...hidden },
+    pairs_stat_arb:    { ...hidden, score: true, scoreTitle: 'Z-Score', scoreSub: 'Pair spread stretch' },
+    funding_basis:     { ...hidden, score: true, scoreTitle: 'Basis', scoreSub: 'Funding / basis score' },
+    confluence:        { score: true, rsi: true,  scoreTitle: 'Score', scoreSub: '-5 to +5 confluence vote', rsiTitle: 'RSI', rsiSub: 'Overbought > 70 · Oversold < 30' },
+    mean_reversion:    { score: true, rsi: true,  scoreTitle: 'Reversion', scoreSub: 'Bollinger / RSI stretch', rsiTitle: 'RSI', rsiSub: 'Extremes drive entries' },
+    mixed_consensus:   { score: true, rsi: false, scoreTitle: 'Votes', scoreSub: 'Long votes minus short votes', rsiTitle: 'RSI', rsiSub: '' },
+    precision_momentum:{ score: true, rsi: true,  scoreTitle: 'Momentum', scoreSub: 'Multi-layer confirmation score', rsiTitle: 'RSI', rsiSub: 'Momentum zone filter' },
+    trend_following:   { score: true, rsi: true,  scoreTitle: 'Trend', scoreSub: 'EMA / Supertrend alignment', rsiTitle: 'RSI', rsiSub: 'Trend momentum filter' },
+    volatility_squeeze:{ score: true, rsi: true,  scoreTitle: 'Squeeze', scoreSub: 'Breakout strength', rsiTitle: 'RSI', rsiSub: 'Breakout confirmation' },
+  };
+  return configs[strategyId] || { score: true, rsi: true, ...hidden };
+}
+
+function configureChartPanels(strategyId) {
+  const cfg = chartPanelConfig(strategyId);
+  if (el.scorePanel) el.scorePanel.hidden = !cfg.score;
+  if (el.rsiPanel) el.rsiPanel.hidden = !cfg.rsi;
+  if (el.chartSubRow) el.chartSubRow.hidden = !cfg.score && !cfg.rsi;
+  if (el.scorePanelTitle) el.scorePanelTitle.textContent = cfg.scoreTitle || 'Score';
+  if (el.scorePanelSub) el.scorePanelSub.textContent = cfg.scoreSub || '';
+  if (el.rsiPanelTitle) el.rsiPanelTitle.textContent = cfg.rsiTitle || 'RSI';
+  if (el.rsiPanelSub) el.rsiPanelSub.textContent = cfg.rsiSub || '';
+  if (el.chartSubRow) {
+    el.chartSubRow.classList.toggle('one-panel', Boolean(cfg.score) !== Boolean(cfg.rsi));
+  }
+  const chartPanel = el.priceChart?.closest('.chart-panel');
+  if (chartPanel) {
+    chartPanel.classList.toggle('chart-panel-expanded', !cfg.score && !cfg.rsi);
+    chartPanel.classList.toggle('chart-panel-tall', Boolean(cfg.score) !== Boolean(cfg.rsi));
+  }
+  return cfg;
+}
+
 // ─── Score chart (custom canvas) ─────────────────────────────────────────────
 function drawScoreChart(bars) {
   const canvas = el.scoreChart;
+  if (!canvas || canvas.closest('[hidden]')) return;
   const ctx = canvas.getContext('2d');
   const dpr = window.devicePixelRatio || 1;
   const cssWidth = Math.max(1, canvas.clientWidth || canvas.offsetWidth || 300);
@@ -1069,6 +1124,7 @@ function drawScoreChart(bars) {
 // ─── RSI chart (custom canvas) ────────────────────────────────────────────────
 function drawRsiChart(bars) {
   const canvas = el.rsiChart;
+  if (!canvas || canvas.closest('[hidden]')) return;
   const ctx = canvas.getContext('2d');
   canvas.width = canvas.offsetWidth;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1183,12 +1239,13 @@ async function loadSnapshot() {
 
   // Charts
   const bars = data.bars || [];
+  const panelCfg = configureChartPanels(data.strategy?.id);
   updatePriceChart(bars);
   updatePositionLines(stateData);
   updateSweepOverlays(bars, data.strategy?.id, data.indicators);
   updateIndicatorOverlays(bars, data.strategy?.id, data.strategy?.chart_config);
-  drawScoreChart(bars);
-  drawRsiChart(bars);
+  if (panelCfg.score) drawScoreChart(bars);
+  if (panelCfg.rsi) drawRsiChart(bars);
 
   // Strategy details
   const strat = data.strategy || {};
@@ -1929,6 +1986,43 @@ function populateBacktestStrategySelect() {
   if (!el.backtestStrategySelect.value && state.builtinBacktestStrategies.length) {
     el.backtestStrategySelect.value = `builtin:${DEFAULT_STRATEGY}`;
   }
+  populatePaperStrategySet();
+}
+
+function populatePaperStrategySet() {
+  if (!el.paperStrategySet) return;
+  const selectedSingle = el.backtestStrategySelect?.value || `builtin:${DEFAULT_STRATEGY}`;
+  const builtins = state.builtinBacktestStrategies.map(s => ({
+    value: `builtin:${s.id}`,
+    label: s.name || s.id,
+    kind: 'Built in',
+  }));
+  const custom = state.customStrategies
+    .filter(s => s.enabled)
+    .map(s => ({
+      value: `custom:${s.id}`,
+      label: `${s.title || s.slug} · v${s.version || 1}`,
+      kind: 'Custom',
+    }));
+  const rows = builtins.concat(custom);
+  el.paperStrategySet.innerHTML = rows.length ? rows.map(item => `
+    <label title="${escapeHtml(item.kind)}">
+      <input type="checkbox" value="${escapeHtml(item.value)}" ${item.value === selectedSingle ? 'checked' : ''} />
+      <span>${escapeHtml(item.label)}</span>
+    </label>
+  `).join('') : '<div class="empty-row">No strategies available.</div>';
+}
+
+function setPaperStrategyChecks(checked) {
+  if (!el.paperStrategySet) return;
+  el.paperStrategySet.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = Boolean(checked); });
+}
+
+function selectedPaperStrategies() {
+  if (!el.paperStrategySet) return [];
+  return Array.from(el.paperStrategySet.querySelectorAll('input[type="checkbox"]:checked'))
+    .map(cb => cb.value)
+    .filter(Boolean);
 }
 
 function renderCustomStrategyForm(strategy) {
@@ -2078,10 +2172,25 @@ function backtestRequestPayload() {
   };
 }
 
+function paperEvaluationPayload() {
+  return {
+    ...backtestRequestPayload(),
+    strategies: selectedPaperStrategies(),
+    custom_strategy_id: null,
+    ai_verification_enabled: Boolean(el.btAiVerify?.checked),
+  };
+}
+
 function setBacktestButtonRunning(running) {
   if (!el.runBacktestBtn) return;
   el.runBacktestBtn.disabled = Boolean(running);
   el.runBacktestBtn.textContent = running ? 'Running...' : 'Run Backtest';
+}
+
+function setPaperSetButtonRunning(running) {
+  if (!el.runPaperSetBtn) return;
+  el.runPaperSetBtn.disabled = Boolean(running);
+  el.runPaperSetBtn.textContent = running ? 'Running...' : 'Run Paper Set';
 }
 
 function stopBacktestPolling() {
@@ -2188,6 +2297,68 @@ async function runBacktest() {
     setBacktestStatus('Network error while starting backtest.', 'err');
     setBacktestButtonRunning(false);
   }
+}
+
+async function runPaperEvaluationSet() {
+  const strategies = selectedPaperStrategies();
+  if (!strategies.length) {
+    setBacktestStatus('Choose at least one strategy for the paper set.', 'err');
+    return;
+  }
+  setPaperSetButtonRunning(true);
+  setBacktestStatus(`Running paper set for ${strategies.length} strategy(s)...`, '');
+  if (el.paperEvalBody) {
+    el.paperEvalBody.innerHTML = '<tr><td colspan="7" class="empty-row">Paper evaluation running...</td></tr>';
+  }
+  try {
+    const res = await fetch('/api/backtests/paper-evaluate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(paperEvaluationPayload()),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      setBacktestStatus(data.message || 'Paper evaluation failed.', 'err');
+      if (el.paperEvalBody) el.paperEvalBody.innerHTML = '<tr><td colspan="7" class="empty-row">Paper evaluation failed.</td></tr>';
+      return;
+    }
+    renderPaperEvaluationResults(data);
+    setBacktestStatus(`Paper set complete: ${data.successful || 0}/${data.count || 0} strategy(s).`, data.failed ? 'err' : 'ok');
+  } catch (err) {
+    setBacktestStatus('Network error while running paper set.', 'err');
+    if (el.paperEvalBody) el.paperEvalBody.innerHTML = '<tr><td colspan="7" class="empty-row">Network error.</td></tr>';
+  } finally {
+    setPaperSetButtonRunning(false);
+  }
+}
+
+function renderPaperEvaluationResults(data) {
+  const rows = data.results || [];
+  if (!el.paperEvalBody) return;
+  el.paperEvalBody.innerHTML = rows.length ? rows.map(item => {
+    if (!item.ok) {
+      return `<tr>
+        <td>—</td>
+        <td>${escapeHtml(item.selection || '—')}</td>
+        <td colspan="5" class="bear">${escapeHtml(item.message || 'Failed')}</td>
+      </tr>`;
+    }
+    const s = item.summary || {};
+    const strategy = item.strategy || {};
+    const latest = item.latest_order || null;
+    const latestText = latest
+      ? `${latest.side || '—'} ${fmtTs(latest.entry_ts)} → ${fmtTs(latest.exit_ts)} · ${latest.exit_reason || '—'}`
+      : 'No paper orders';
+    return `<tr>
+      <td><a class="bt-link" href="/api/backtests/${item.run_id}" target="_blank">#${item.run_id}</a></td>
+      <td>${escapeHtml(strategy.name || strategy.id || item.selection || '—')}</td>
+      <td class="${parseFloat(s.total_return_pct || 0) >= 0 ? 'bull' : 'bear'} mono">${s.total_return_pct != null ? fmtPct(s.total_return_pct) : '—'}</td>
+      <td class="mono">${s.portfolio_sharpe ?? s.sharpe ?? '—'}</td>
+      <td class="mono">${s.max_drawdown_pct != null ? fmtPct(s.max_drawdown_pct) : '—'}</td>
+      <td class="mono">${s.trades ?? 0}</td>
+      <td>${escapeHtml(latestText)}</td>
+    </tr>`;
+  }).join('') : '<tr><td colspan="7" class="empty-row">No paper results.</td></tr>';
 }
 
 function renderBacktestResult(data) {
@@ -2784,6 +2955,18 @@ function wireEvents() {
   }
   if (el.runBacktestBtn) {
     el.runBacktestBtn.addEventListener('click', runBacktest);
+  }
+  if (el.backtestStrategySelect) {
+    el.backtestStrategySelect.addEventListener('change', populatePaperStrategySet);
+  }
+  if (el.paperSelectAllBtn) {
+    el.paperSelectAllBtn.addEventListener('click', () => setPaperStrategyChecks(true));
+  }
+  if (el.paperClearBtn) {
+    el.paperClearBtn.addEventListener('click', () => setPaperStrategyChecks(false));
+  }
+  if (el.runPaperSetBtn) {
+    el.runPaperSetBtn.addEventListener('click', runPaperEvaluationSet);
   }
   if (el.reportsRefreshBtn) {
     el.reportsRefreshBtn.addEventListener('click', () => loadReports());

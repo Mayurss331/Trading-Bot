@@ -501,6 +501,27 @@ Request body matches `POST /api/backtests/run` with one extra field:
 }
 ```
 
+### `POST /api/backtests/paper-evaluate`
+
+Runs a selected set of built-in and custom strategies in paper simulation mode
+using the same market/config. Each strategy is stored as a separate backtest run
+and returned with its own summary, trade/order ledger snippet, and events.
+
+Request body matches `POST /api/backtests/run` with one extra field:
+
+```json
+{
+  "pair": "B-BTC_USDT",
+  "market": "BTCUSDT",
+  "mode": "futures",
+  "timeframe": "15m",
+  "strategies": ["builtin:confluence", "builtin:volume_profile", "custom:3"]
+}
+```
+
+This powers the dashboard's Paper Strategy Set selector so multiple strategies
+can be evaluated side by side without mixing their paper orders or results.
+
 ## Database Design
 
 Add custom-strategy storage plus the backtest result tables:

@@ -370,6 +370,20 @@
             <label class="bt-check"><input id="btAiVerify" type="checkbox" /> AI verification</label>
             <button id="runBacktestBtn" type="button" class="btn-primary">Run Backtest</button>
           </div>
+          <div class="paper-eval-panel">
+            <div class="paper-eval-head">
+              <div>
+                <strong>Paper Strategy Set</strong>
+                <span>Evaluate selected built-in and custom strategies separately.</span>
+              </div>
+              <div class="paper-eval-actions">
+                <button id="paperSelectAllBtn" type="button" class="btn-ghost">All</button>
+                <button id="paperClearBtn" type="button" class="btn-ghost">Clear</button>
+                <button id="runPaperSetBtn" type="button" class="btn-secondary">Run Paper Set</button>
+              </div>
+            </div>
+            <div id="paperStrategySet" class="paper-strategy-set"></div>
+          </div>
         </section>
 
         <section class="backtest-section">
@@ -381,6 +395,14 @@
             </div>
           </div>
           <div id="backtestSummary" class="bt-summary"></div>
+          <div class="table-wrap paper-eval-results">
+            <table class="data-table">
+              <thead><tr><th>Run</th><th>Strategy</th><th>Return</th><th>Sharpe</th><th>Max DD</th><th>Trades</th><th>Latest Order</th></tr></thead>
+              <tbody id="paperEvalBody">
+                <tr><td colspan="7" class="empty-row">No paper strategy set run yet.</td></tr>
+              </tbody>
+            </table>
+          </div>
           <canvas id="backtestEquityChart" class="bt-chart" aria-label="Backtest equity chart"></canvas>
           <div class="table-wrap">
             <table class="data-table backtest-trades-table">
@@ -622,21 +644,21 @@
           <div id="priceChart" class="lwc-container" role="img" aria-label="Price candlestick chart"></div>
         </section>
 
-        <div class="chart-sub-row">
-          <div class="sub-chart-panel">
+        <div class="chart-sub-row" id="chartSubRow">
+          <div class="sub-chart-panel" id="scorePanel">
             <div class="panel-hd">
               <div class="panel-hd-left">
-                <h2>Score</h2>
-                <p>&minus;5 to +5 confluence vote</p>
+                <h2 id="scorePanelTitle">Score</h2>
+                <p id="scorePanelSub">&minus;5 to +5 confluence vote</p>
               </div>
             </div>
             <canvas id="scoreChart" aria-label="Strategy score chart"></canvas>
           </div>
-          <div class="sub-chart-panel">
+          <div class="sub-chart-panel" id="rsiPanel">
             <div class="panel-hd">
               <div class="panel-hd-left">
-                <h2>RSI</h2>
-                <p>Overbought &gt; 70 &middot; Oversold &lt; 30</p>
+                <h2 id="rsiPanelTitle">RSI</h2>
+                <p id="rsiPanelSub">Overbought &gt; 70 &middot; Oversold &lt; 30</p>
               </div>
             </div>
             <canvas id="rsiChart" aria-label="RSI chart"></canvas>

@@ -81,6 +81,10 @@ class WalkForwardRequest(BacktestRequest):
     folds: int = 4
 
 
+class PaperEvaluationRequest(BacktestRequest):
+    strategies: list[str] = []
+
+
 def _custom_strategy_payload(row: CustomStrategy, include_code: bool = False) -> dict:
     payload = {
         "id": row.id,
@@ -232,6 +236,70 @@ async def walk_forward(body: WalkForwardRequest) -> JSONResponse:
     except Exception as exc:
         return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
     return JSONResponse(clean(result), status_code=200 if result.get("ok") else 400)
+
+
+@router.post("/paper-evaluate")
+async def paper_evaluate(body: PaperEvaluationRequest) -> JSONResponse:
+    payload = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+    selections = [str(item).strip() for item in payload.pop("strategies", []) if str(item).strip()]
+    if not selections:
+        selected = payload.get("strategy") or "confluence"
+        selections = [f"builtin:{selected}"]
+
+    base_payload = dict(payload)
+    base_payload["ai_verification_enabled"] = bool(base_payload.get("ai_verification_enabled", False))
+    results: list[dict] = []
+
+    for selected in selections[:20]:
+        kind, _, raw_id = selected.partition(":")
+        if not raw_id:
+            kind, raw_id = "builtin", kind
+        run_payload = dict(base_payload)
+        if kind == "custom":
+            try:
+                custom_id = int(raw_id)
+            except (TypeError, ValueError):
+                results.append({"ok": False, "selection": selected, "message": "Invalid custom strategy id."})
+                continue
+            run_payload["custom_strategy_id"] = custom_id
+            run_payload["strategy"] = "custom"
+        else:
+            run_payload["custom_strategy_id"] = None
+            run_payload["strategy"] = raw_id
+
+        cfg = BacktestConfig(**run_payload).normalized()
+        try:
+            result = await run_and_store_backtest(cfg)
+        except Exception as exc:
+            results.append({"ok": False, "selection": selected, "message": str(exc)})
+            continue
+        if not result.get("ok"):
+            results.append({"ok": False, "selection": selected, "message": result.get("message", "Paper evaluation failed.")})
+            continue
+        summary = result.get("summary") or {}
+        trades = result.get("trades") or []
+        latest_trade = trades[-1] if trades else None
+        results.append({
+            "ok": True,
+            "selection": selected,
+            "run_id": result.get("run_id"),
+            "strategy": result.get("strategy"),
+            "data": result.get("data"),
+            "summary": summary,
+            "latest_order": latest_trade,
+            "trades": trades[-25:],
+            "events": (result.get("events") or [])[-25:],
+        })
+
+    successful = [r for r in results if r.get("ok")]
+    return JSONResponse(clean({
+        "ok": bool(results),
+        "mode": "paper",
+        "count": len(results),
+        "successful": len(successful),
+        "failed": len(results) - len(successful),
+        "results": results,
+    }), status_code=200 if results else 400)
 
 
 async def _run_backtest_job(job_id: str, cfg: BacktestConfig) -> None:

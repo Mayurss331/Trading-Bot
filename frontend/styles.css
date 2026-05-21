@@ -1084,6 +1084,8 @@ button {
 .chart-leg.bear { color: var(--bear); }
 
 .lwc-container { height: 340px; }
+.chart-panel-expanded .lwc-container { height: 560px; }
+.chart-panel-tall .lwc-container { height: 450px; }
 
 /* Score + RSI row */
 .chart-sub-row {
@@ -1092,7 +1094,10 @@ button {
   background: var(--border-1);
   gap: 1px;
 }
+.chart-sub-row[hidden] { display: none; }
+.chart-sub-row.one-panel { grid-template-columns: 1fr; }
 .sub-chart-panel { background: var(--surface-1); padding: 10px 14px; }
+.sub-chart-panel[hidden] { display: none; }
 .sub-chart-panel canvas { display: block; width: 100%; height: 130px; }
 
 /* ─── Tracker Sidebar ────────────────────────────────────────────────────── */
@@ -1551,6 +1556,66 @@ body.drawer-open  { overflow: hidden; }
   font-weight: 600;
 }
 .bt-check input { width: auto; }
+.paper-eval-panel {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-2);
+}
+.paper-eval-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.paper-eval-head strong {
+  display: block;
+  color: var(--tx-1);
+  font-size: .78rem;
+}
+.paper-eval-head span {
+  display: block;
+  color: var(--tx-3);
+  font-size: .66rem;
+  margin-top: 2px;
+}
+.paper-eval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: flex-end;
+}
+.paper-strategy-set {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 6px;
+  max-height: 160px;
+  overflow: auto;
+  padding: 2px;
+}
+.paper-strategy-set label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 6px 8px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-2);
+  border-radius: var(--r-sm);
+  color: var(--tx-2);
+  font-size: .7rem;
+  font-weight: 700;
+}
+.paper-strategy-set input { width: auto; }
+.paper-strategy-set span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.paper-eval-results {
+  margin-bottom: 10px;
+  max-height: 240px;
+}
 .bt-status {
   color: var(--tx-3);
   font-size: .68rem;
