@@ -793,17 +793,19 @@ function updateIndicatorOverlays(bars, strategyId, chartConfig) {
 
   // daily_sweep manages its own overlays via updateSweepOverlays
   if (strategyId === 'daily_sweep' || overlays.includes('sweep')) {
-    ['ema_fast', 'ema_slow', 'bb_upper', 'bb_mid', 'bb_lower'].forEach(_removeIndicatorSeries);
+    ['ema_fast', 'ema_slow', 'bb_upper', 'bb_mid', 'bb_lower', 'vp_poc', 'vp_vah', 'vp_val'].forEach(_removeIndicatorSeries);
     _clearSignalMarkers();
     return;
   }
 
   const wantEma = overlays.includes('ema');
   const wantBB  = overlays.includes('bb');
+  const wantVP  = overlays.includes('volume_profile');
 
   const hasFast = wantEma && bars.some(b => b.ema_fast != null);
   const hasSlow = wantEma && bars.some(b => b.ema_slow != null);
   const hasBB   = wantBB  && bars.some(b => b.bb_upper != null);
+  const hasVP   = wantVP  && bars.some(b => b.vp_poc != null);
 
   // EMA fast
   if (hasFast) {
@@ -860,6 +862,35 @@ function updateIndicatorOverlays(bars, strategyId, chartConfig) {
     }
   } else {
     ['bb_upper', 'bb_mid', 'bb_lower'].forEach(_removeIndicatorSeries);
+  }
+
+  // Volume Profile levels: POC, VAH, VAL
+  if (hasVP) {
+    const Dashed = LightweightCharts?.LineStyle?.Dashed ?? 2;
+    const vpDefs = [
+      { key: 'vp_poc', col: 'vp_poc', color: COLORS.blue,   title: 'POC', lineStyle: 0, width: 2 },
+      { key: 'vp_vah', col: 'vp_vah', color: COLORS.violet, title: 'VAH', lineStyle: Dashed, width: 1 },
+      { key: 'vp_val', col: 'vp_val', color: COLORS.violet, title: 'VAL', lineStyle: Dashed, width: 1 },
+    ];
+    for (const def of vpDefs) {
+      if (!state.indicatorSeries[def.key]) {
+        try {
+          state.indicatorSeries[def.key] = _addLineSeries({
+            color: def.color,
+            lineWidth: def.width,
+            lineStyle: def.lineStyle,
+            priceLineVisible: false,
+            lastValueVisible: true,
+            title: def.title,
+          });
+        } catch {}
+      }
+      const data = bars.filter(b => b[def.col] != null)
+        .map(b => ({ time: Math.floor(new Date(b.time).getTime() / 1000), value: b[def.col] }));
+      try { state.indicatorSeries[def.key]?.setData(data); } catch {}
+    }
+  } else {
+    ['vp_poc', 'vp_vah', 'vp_val'].forEach(_removeIndicatorSeries);
   }
 
   // Signal markers: entry arrows + exit circles
@@ -1163,6 +1194,7 @@ async function loadSnapshot() {
   const strat = data.strategy || {};
   const ind   = data.indicators || {};
   const isSweep = data.strategy?.id === 'daily_sweep';
+  const isVolumeProfile = data.strategy?.id === 'volume_profile';
 
   const stratRows = [
     ['Name', strat.name],
@@ -1178,6 +1210,13 @@ async function loadSnapshot() {
       stratRows.push(['FVG Band', `${fmtPrice(ind.fvg_low)} – ${fmtPrice(ind.fvg_high)}`]);
     if (ind.prev_day_high != null) stratRows.push(['Prev Day High', fmtPrice(ind.prev_day_high)]);
     if (ind.prev_day_low  != null) stratRows.push(['Prev Day Low',  fmtPrice(ind.prev_day_low)]);
+  } else if (isVolumeProfile) {
+    if (ind.vp_poc != null) stratRows.push(['POC', fmtPrice(ind.vp_poc)]);
+    if (ind.vp_vah != null) stratRows.push(['VAH', fmtPrice(ind.vp_vah)]);
+    if (ind.vp_val != null) stratRows.push(['VAL', fmtPrice(ind.vp_val)]);
+    if (ind.vp_position) stratRows.push(['Context', ind.vp_position]);
+    if (ind.value_area_pct != null) stratRows.push(['Value Area', `${Number(ind.value_area_pct).toFixed(0)}%`]);
+    if (ind.profile_rows != null) stratRows.push(['Rows', ind.profile_rows]);
   }
   el.strategyList.innerHTML = stratRows
     .map(([k, v]) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '').join('');

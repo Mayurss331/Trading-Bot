@@ -14,6 +14,7 @@ from . import (
     pairs_stat_arb,
     precision_momentum,
     trend_following,
+    volume_profile,
     volatility_squeeze,
 )
 from .base import DEFAULT_CHART_CONFIG, StrategyContext
@@ -32,6 +33,7 @@ STRATEGIES: dict[str, StrategyFn] = {
     pairs_stat_arb.META.id:      pairs_stat_arb.analyze,
     precision_momentum.META.id:  precision_momentum.analyze,
     trend_following.META.id:     trend_following.analyze,
+    volume_profile.META.id:      volume_profile.analyze,
     volatility_squeeze.META.id:  volatility_squeeze.analyze,
 }
 
@@ -45,6 +47,7 @@ METAS = {
     pairs_stat_arb.META.id:      pairs_stat_arb.META,
     precision_momentum.META.id:  precision_momentum.META,
     trend_following.META.id:     trend_following.META,
+    volume_profile.META.id:      volume_profile.META,
     volatility_squeeze.META.id:  volatility_squeeze.META,
 }
 
@@ -59,6 +62,7 @@ CHART_CONFIGS: dict[str, dict] = {
     pairs_stat_arb.META.id:      getattr(pairs_stat_arb,     "CHART_CONFIG", DEFAULT_CHART_CONFIG),
     precision_momentum.META.id:  getattr(precision_momentum, "CHART_CONFIG", DEFAULT_CHART_CONFIG),
     trend_following.META.id:     getattr(trend_following,    "CHART_CONFIG", DEFAULT_CHART_CONFIG),
+    volume_profile.META.id:      getattr(volume_profile,     "CHART_CONFIG", DEFAULT_CHART_CONFIG),
     volatility_squeeze.META.id:  getattr(volatility_squeeze, "CHART_CONFIG", DEFAULT_CHART_CONFIG),
 }
 
