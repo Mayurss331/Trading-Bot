@@ -11,7 +11,13 @@ from sqlalchemy import select
 from ..bot_loader import bot
 from ..db.database import AsyncSessionLocal
 from ..db.models import CustomStrategy, UserSetting
-from ..db.persistence import store_tracker_signal_events, store_trade
+from ..db.persistence import (
+    get_or_create_paper_account,
+    paper_account_capacity,
+    store_paper_order,
+    store_tracker_signal_events,
+    store_trade,
+)
 from ..utils import clean, coin_from_pair, futures_market_for_coin, futures_pair_for_coin, make_cfg
 from strategies.base import StrategyContext
 from strategies.registry import get_strategy, normalize_strategy_id
@@ -37,6 +43,13 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
 
 
 async def _load_dashboard_settings() -> dict:
@@ -145,6 +158,8 @@ def _trade_from_open_state(pair: str, state: object, cfg: object, strategy_id: s
         return None
     return {
         "pair": pair,
+        "market": getattr(cfg, "market", None),
+        "coin": coin_from_pair(pair),
         "side": int(state.side),
         "entry_ts": state.entry_ts,
         "exit_ts": None,
@@ -159,6 +174,7 @@ def _trade_from_open_state(pair: str, state: object, cfg: object, strategy_id: s
         "mode": "futures",
         "strategy": strategy_id,
         "execution_mode": "paper",
+        "timeframe": getattr(cfg, "timeframe", None),
     }
 
 
@@ -309,17 +325,42 @@ async def _execute_saved_tracker_orders(settings: dict, coins: list[str], strate
 
     max_symbols = max(1, min(int(float(os.getenv("BACKGROUND_EXECUTOR_MAX_SYMBOLS", "3"))), 12))
     for effective_strategy_id, custom_analyzer, selection in resolved:
+        custom_id = getattr(custom_analyzer, "custom_strategy_id", None) if custom_analyzer is not None else None
+        monthly_capital = max(1.0, _env_float("PAPER_TRADING_MONTHLY_CAPITAL", 100.0))
+        account = await get_or_create_paper_account(
+            strategy_key=selection,
+            strategy=effective_strategy_id,
+            custom_strategy_id=custom_id,
+            starting_capital=monthly_capital,
+        )
+        capacity = await paper_account_capacity(account["id"]) or account
+        available_risk = float(capacity.get("available_risk", capacity.get("equity", 0.0)) or 0.0)
+        if available_risk <= 0:
+            logger.warning(
+                "Paper executor disabled %s for %s: monthly $%.2f account has no available risk until losses close or next month.",
+                selection,
+                account.get("month_key"),
+                monthly_capital,
+            )
+            continue
         logger.info("Paper executor watching %s for strategy %s.", ",".join(coins[:max_symbols]), selection)
         for coin in coins[:max_symbols]:
             try:
+                capacity = await paper_account_capacity(account["id"]) or account
+                available_risk = float(capacity.get("available_risk", capacity.get("equity", 0.0)) or 0.0)
+                if available_risk <= 0:
+                    logger.info("Paper executor skipped %s/%s: no available paper risk.", coin, effective_strategy_id)
+                    continue
+                effective_risk = max(0.01, min(float(risk or 0.0), available_risk))
                 events, opened_trades = await asyncio.to_thread(
-                    _execute_one, coin, effective_strategy_id, risk, lookback_days, timeframe, exec_mode, custom_analyzer
+                    _execute_one, coin, effective_strategy_id, effective_risk, lookback_days, timeframe, exec_mode, custom_analyzer
                 )
                 for event in events:
                     logger.info("Paper executor [%s]: %s", effective_strategy_id, event)
 
                 for trade in opened_trades:
                     try:
+                        await store_paper_order(account["id"], trade, strategy_key=selection)
                         await store_trade(trade)
                     except Exception as exc:
                         logger.warning("Failed to store open paper trade for %s/%s: %s", coin, effective_strategy_id, exc)
@@ -328,9 +369,13 @@ async def _execute_saved_tracker_orders(settings: dict, coins: list[str], strate
                 for trade in pending:
                     trade.setdefault("strategy", effective_strategy_id)
                     trade["execution_mode"] = "paper"
+                    trade.setdefault("market", futures_market_for_coin(coin))
+                    trade.setdefault("coin", coin)
+                    trade.setdefault("timeframe", timeframe)
                     if trade.get("mode") == "spot":
                         trade["mode"] = "futures"
                     try:
+                        await store_paper_order(account["id"], trade, strategy_key=selection)
                         await store_trade(trade)
                     except Exception as exc:
                         logger.warning("Failed to store closed paper trade for %s/%s: %s", coin, effective_strategy_id, exc)

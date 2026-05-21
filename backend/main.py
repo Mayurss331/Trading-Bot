@@ -114,10 +114,19 @@ async def lifespan(app: FastAPI):
         logger.warning("REPORT_EMAIL_TO not set — daily report scheduler disabled.")
 
     paper_eval_recipients = _parse_emails(
-        os.getenv("PAPER_EVAL_EMAIL_TO", "").strip() or os.getenv("REPORT_EMAIL_TO", "")
+        os.getenv("PAPER_TRADING_EMAIL_TO", "").strip()
+        or os.getenv("PAPER_EVAL_EMAIL_TO", "").strip()
+        or os.getenv("REPORT_EMAIL_TO", "")
     )
-    if paper_eval_recipients and _env_bool("PAPER_EVAL_EMAIL_ENABLED", True):
-        paper_eval_hours = max(1, _env_int("PAPER_EVAL_EMAIL_INTERVAL_HOURS", 12))
+    paper_email_enabled = _env_bool(
+        "PAPER_TRADING_EMAIL_ENABLED",
+        _env_bool("PAPER_EVAL_EMAIL_ENABLED", True),
+    )
+    if paper_eval_recipients and paper_email_enabled:
+        paper_eval_hours = max(
+            1,
+            _env_int("PAPER_TRADING_EMAIL_INTERVAL_HOURS", _env_int("PAPER_EVAL_EMAIL_INTERVAL_HOURS", 12)),
+        )
 
         async def _paper_evaluation_report():
             try:

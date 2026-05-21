@@ -9,10 +9,20 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 
 from ..db.database import AsyncSessionLocal
-from ..db.models import AccountSnapshot, Candle, PositionSnapshot, SignalEvent, StateSnapshot, Trade, UserSetting
+from ..db.models import (
+    AccountSnapshot,
+    Candle,
+    PaperAccount,
+    PaperOrder,
+    PositionSnapshot,
+    SignalEvent,
+    StateSnapshot,
+    Trade,
+    UserSetting,
+)
 from ..utils import clean
 
 router = APIRouter(tags=["reports"])
@@ -187,6 +197,81 @@ async def report_pnl_series(exec_mode: str = "all") -> JSONResponse:
     return JSONResponse({"ok": True, "exec_mode": exec_mode, "series": series})
 
 
+@router.get("/api/reports/paper-trading")
+async def paper_trading_overview(month: str = "", limit: int = 80) -> JSONResponse:
+    month_key = month.strip() or datetime.utcnow().strftime("%Y-%m")
+    limit = max(1, min(limit, 300))
+    async with AsyncSessionLocal() as db:
+        account_result = await db.execute(
+            select(PaperAccount)
+            .where(PaperAccount.month_key == month_key)
+            .order_by(PaperAccount.equity.desc())
+        )
+        accounts = account_result.scalars().all()
+        account_ids = [a.id for a in accounts]
+        if account_ids:
+            order_result = await db.execute(
+                select(PaperOrder)
+                .where(PaperOrder.account_id.in_(account_ids))
+                .order_by(PaperOrder.updated_at.desc(), PaperOrder.entry_ts.desc())
+                .limit(limit)
+            )
+            orders = order_result.scalars().all()
+        else:
+            orders = []
+
+    account_payloads = []
+    for a in accounts:
+        account_payloads.append({
+            "id": a.id,
+            "month_key": a.month_key,
+            "strategy_key": a.strategy_key,
+            "strategy": a.strategy,
+            "custom_strategy_id": a.custom_strategy_id,
+            "starting_capital": a.starting_capital,
+            "realized_pnl": a.realized_pnl,
+            "unrealized_pnl": a.unrealized_pnl,
+            "equity": a.equity,
+            "return_pct": ((a.equity / a.starting_capital - 1.0) * 100) if a.starting_capital else None,
+            "open_positions": a.open_positions,
+            "closed_trades": a.closed_trades,
+        })
+
+    order_payloads = []
+    for o in orders:
+        order_payloads.append({
+            "id": o.id,
+            "account_id": o.account_id,
+            "pair": o.pair,
+            "coin": o.coin,
+            "strategy": o.strategy,
+            "custom_strategy_id": o.custom_strategy_id,
+            "timeframe": o.timeframe,
+            "side": "LONG" if o.side > 0 else "SHORT",
+            "status": o.status,
+            "entry_ts": o.entry_ts,
+            "exit_ts": o.exit_ts,
+            "entry_px": o.entry_px,
+            "exit_px": o.exit_px,
+            "stop_px": o.stop_px,
+            "target_px": o.target_px,
+            "qty": o.qty,
+            "risk_usd": o.risk_usd,
+            "realized_pnl": o.realized_pnl,
+            "unrealized_pnl": o.unrealized_pnl,
+            "exit_reason": o.exit_reason,
+            "updated_at": o.updated_at,
+        })
+
+    return JSONResponse(clean({
+        "ok": True,
+        "month_key": month_key,
+        "starting_capital_default": _env_float("PAPER_TRADING_MONTHLY_CAPITAL", 100.0),
+        "accounts": account_payloads,
+        "orders": order_payloads,
+    }))
+
+
 class SendEmailRequest(BaseModel):
     to: str = ""
 
@@ -230,7 +315,11 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 def _paper_eval_recipients() -> list[str]:
-    raw = os.getenv("PAPER_EVAL_EMAIL_TO", "").strip() or os.getenv("REPORT_EMAIL_TO", "")
+    raw = (
+        os.getenv("PAPER_TRADING_EMAIL_TO", "").strip()
+        or os.getenv("PAPER_EVAL_EMAIL_TO", "").strip()
+        or os.getenv("REPORT_EMAIL_TO", "")
+    )
     return _parse_emails(raw)
 
 
@@ -519,63 +608,94 @@ async def dispatch_paper_trading_report(to_emails: list[str] | None = None, hour
     if not recipients:
         raise RuntimeError("PAPER_EVAL_EMAIL_TO or REPORT_EMAIL_TO must contain at least one email address.")
 
-    interval_hours = max(1, int(hours or _env_int("PAPER_EVAL_EMAIL_INTERVAL_HOURS", 12)))
+    interval_hours = max(
+        1,
+        int(hours or _env_int("PAPER_TRADING_EMAIL_INTERVAL_HOURS", _env_int("PAPER_EVAL_EMAIL_INTERVAL_HOURS", 12))),
+    )
     generated_at = datetime.utcnow()
     since = generated_at - timedelta(hours=interval_hours)
+    month_key = generated_at.strftime("%Y-%m")
 
     async with AsyncSessionLocal() as db:
-        result = await db.execute(
-            select(Trade)
+        account_result = await db.execute(
+            select(PaperAccount)
             .where(
-                Trade.execution_mode == "paper",
-                Trade.entry_ts >= since,
+                PaperAccount.month_key == month_key,
             )
-            .order_by(Trade.strategy.asc(), Trade.entry_ts.asc())
+            .order_by(PaperAccount.strategy.asc())
         )
-        trades = result.scalars().all()
+        accounts = account_result.scalars().all()
+        account_ids = [a.id for a in accounts]
+        if account_ids:
+            order_result = await db.execute(
+                select(PaperOrder)
+                .where(
+                    PaperOrder.account_id.in_(account_ids),
+                    or_(
+                        PaperOrder.entry_ts >= since,
+                        PaperOrder.exit_ts >= since,
+                        PaperOrder.status == "open",
+                    ),
+                )
+                .order_by(PaperOrder.strategy.asc(), PaperOrder.entry_ts.asc())
+            )
+            orders = order_result.scalars().all()
+        else:
+            orders = []
 
-    grouped: dict[str, list[Trade]] = {}
-    for trade in trades:
-        grouped.setdefault(trade.strategy or "unknown", []).append(trade)
+    account_by_id = {a.id: a for a in accounts}
+    grouped: dict[int, list[PaperOrder]] = {}
+    for order in orders:
+        grouped.setdefault(order.account_id, []).append(order)
 
     lines = [
         "CoinDCX Bot - Live Paper Trading Report",
         f"Generated: {generated_at.strftime('%Y-%m-%d %H:%M UTC')}",
-        f"Window: last {interval_hours} hour(s)",
-        f"Paper orders: {len(trades)}",
+        f"Month account: {month_key}",
+        f"Window: last {interval_hours} hour(s), plus open positions",
+        f"Starting capital: {_fmt_metric(_env_float('PAPER_TRADING_MONTHLY_CAPITAL', 100.0), ' USDT')} per strategy per month",
+        f"Paper orders in report: {len(orders)}",
         "",
         "BY STRATEGY",
         "-----------",
     ]
-    for strategy, rows in sorted(grouped.items()):
-        closed = [t for t in rows if t.exit_ts is not None]
-        open_rows = [t for t in rows if t.exit_ts is None]
-        pnl = sum(float(t.pnl or 0.0) for t in closed)
-        wins = sum(1 for t in closed if (t.pnl or 0) > 0)
+    for account in accounts:
+        rows = grouped.get(account.id, [])
+        closed = [t for t in rows if t.status == "closed"]
+        open_rows = [t for t in rows if t.status == "open"]
+        pnl = sum(float(t.realized_pnl or 0.0) for t in closed)
+        wins = sum(1 for t in closed if (t.realized_pnl or 0) > 0)
         win_rate = (wins / len(closed) * 100) if closed else None
         lines.append(
-            f"- {strategy}: {len(rows)} order(s), {len(open_rows)} open, "
-            f"closed PnL {_fmt_metric(pnl, ' USDT')}, win {_fmt_metric(win_rate, '%')}"
+            f"- {account.strategy_key}: equity {_fmt_metric(account.equity, ' USDT')}, "
+            f"realized {_fmt_metric(account.realized_pnl, ' USDT')}, "
+            f"open {account.open_positions}, closed {account.closed_trades}, "
+            f"window orders {len(rows)}, win {_fmt_metric(win_rate, '%')}"
         )
         for t in rows[-8:]:
-            status = "OPEN" if t.exit_ts is None else f"CLOSED {t.exit_reason or ''}".strip()
+            status = "OPEN" if t.status == "open" else f"CLOSED {t.exit_reason or ''}".strip()
             side = "LONG" if t.side > 0 else "SHORT"
             lines.append(
                 f"  #{t.id} {t.pair} {side} {status} "
-                f"entry {_fmt_metric(t.entry_px)} exit {_fmt_metric(t.exit_px)} pnl {_fmt_metric(t.pnl, ' USDT')}"
+                f"entry {_fmt_metric(t.entry_px)} exit {_fmt_metric(t.exit_px)} "
+                f"pnl {_fmt_metric(t.realized_pnl, ' USDT')}"
             )
-    if not grouped:
-        lines.append("- No paper orders stored in this window.")
+    if not accounts:
+        lines.append("- No monthly paper accounts exist yet. Start tracker with paper strategies selected.")
     lines.extend(["", "CoinDCX Bot Dashboard"])
 
     csv_output = io.StringIO()
     writer = csv.DictWriter(csv_output, fieldnames=[
-        "id", "strategy", "pair", "side", "status", "entry_ts", "exit_ts",
-        "entry_px", "exit_px", "qty", "risk_usd", "pnl", "exit_reason",
+        "account", "account_equity", "id", "strategy", "pair", "side", "status",
+        "entry_ts", "exit_ts", "entry_px", "exit_px", "qty", "risk_usd",
+        "realized_pnl", "exit_reason",
     ])
     writer.writeheader()
-    for t in trades:
+    for t in orders:
+        account = account_by_id.get(t.account_id)
         writer.writerow({
+            "account": account.strategy_key if account else "",
+            "account_equity": account.equity if account else "",
             "id": t.id,
             "strategy": t.strategy,
             "pair": t.pair,
@@ -587,7 +707,7 @@ async def dispatch_paper_trading_report(to_emails: list[str] | None = None, hour
             "exit_px": t.exit_px,
             "qty": t.qty,
             "risk_usd": t.risk_usd,
-            "pnl": t.pnl,
+            "realized_pnl": t.realized_pnl,
             "exit_reason": t.exit_reason,
         })
 
@@ -605,8 +725,8 @@ async def dispatch_paper_trading_report(to_emails: list[str] | None = None, hour
     return {
         "ok": True,
         "message": f"Live paper trading report sent to {', '.join(recipients)}.",
-        "count": len(trades),
-        "strategies": {k: len(v) for k, v in grouped.items()},
+        "count": len(orders),
+        "strategies": {account.strategy_key: len(grouped.get(account.id, [])) for account in accounts},
     }
 
 

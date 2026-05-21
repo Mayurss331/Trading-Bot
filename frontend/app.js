@@ -192,6 +192,8 @@ const el = {
   reportsStatus: $('reportsStatus'),
   reportsOverview: $('reportsOverview'),
   reportsTableBody: $('reportsTableBody'),
+  paperTradingAccountsBody: $('paperTradingAccountsBody'),
+  paperTradingOrdersBody: $('paperTradingOrdersBody'),
   rStatTotal:    $('rStatTotal'),
   rStatWinRate:  $('rStatWinRate'),
   rStatNetPnl:   $('rStatNetPnl'),
@@ -1884,8 +1886,52 @@ async function loadReportsTrades() {
   }
 }
 
+async function loadPaperTradingOverview() {
+  try {
+    const res = await fetch('/api/reports/paper-trading');
+    const d = await res.json();
+    if (!d.ok) return;
+    const accounts = d.accounts || [];
+    if (el.paperTradingAccountsBody) {
+      el.paperTradingAccountsBody.innerHTML = accounts.length ? accounts.map(a => {
+        const ret = parseFloat(a.return_pct || 0);
+        const realized = parseFloat(a.realized_pnl || 0);
+        return `<tr>
+          <td>${escapeHtml(a.strategy_key || a.strategy || '—')}</td>
+          <td class="mono">$${fmtReportNum(a.starting_capital, 2)}</td>
+          <td class="mono">$${fmtReportNum(a.equity, 2)}</td>
+          <td class="${ret >= 0 ? 'pnl-pos' : 'pnl-neg'} mono">${ret >= 0 ? '+' : ''}${fmtReportNum(ret, 2)}%</td>
+          <td class="${realized >= 0 ? 'pnl-pos' : 'pnl-neg'} mono">${realized >= 0 ? '+' : ''}$${fmtReportNum(Math.abs(realized), 2)}</td>
+          <td class="mono">${a.open_positions ?? 0}</td>
+          <td class="mono">${a.closed_trades ?? 0}</td>
+        </tr>`;
+      }).join('') : '<tr><td colspan="7" class="empty-row">No monthly paper accounts yet.</td></tr>';
+    }
+    const accountById = new Map(accounts.map(a => [a.id, a]));
+    const orders = d.orders || [];
+    if (el.paperTradingOrdersBody) {
+      el.paperTradingOrdersBody.innerHTML = orders.length ? orders.map(o => {
+        const account = accountById.get(o.account_id) || {};
+        const pnl = parseFloat(o.realized_pnl || 0);
+        return `<tr>
+          <td class="mono">${o.id ?? '—'}</td>
+          <td>${escapeHtml(account.strategy_key || o.strategy || '—')}</td>
+          <td><strong>${escapeHtml(o.pair || '—')}</strong></td>
+          <td>${o.side === 'LONG' ? '<span class="pos-long">LONG</span>' : '<span class="pos-short">SHORT</span>'}</td>
+          <td>${escapeHtml(o.status || '—')}</td>
+          <td class="mono">${fmtReportNum(o.entry_px)}</td>
+          <td class="mono">${fmtReportNum(o.exit_px)}</td>
+          <td class="${pnl >= 0 ? 'pnl-pos' : 'pnl-neg'} mono">${o.status === 'closed' ? `${pnl >= 0 ? '+' : ''}$${fmtReportNum(Math.abs(pnl), 2)}` : '—'}</td>
+        </tr>`;
+      }).join('') : '<tr><td colspan="8" class="empty-row">No paper orders yet.</td></tr>';
+    }
+  } catch (err) {
+    console.error('Paper trading overview failed', err);
+  }
+}
+
 async function loadReports() {
-  await Promise.all([loadReportsOverview(), loadReportsTrades()]);
+  await Promise.all([loadReportsOverview(), loadReportsTrades(), loadPaperTradingOverview()]);
 }
 
 function applySelectOptions(selectEl, options, currentValue, fallbackValue) {

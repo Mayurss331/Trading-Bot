@@ -60,6 +60,69 @@ class UserSetting(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
 
+class PaperAccount(Base):
+    __tablename__ = "paper_accounts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    month_key = Column(String, nullable=False, index=True)
+    strategy_key = Column(String, nullable=False, index=True)
+    strategy = Column(String, nullable=False, index=True)
+    custom_strategy_id = Column(Integer, ForeignKey("custom_strategies.id"), nullable=True, index=True)
+    starting_capital = Column(Float, nullable=False, default=100.0)
+    realized_pnl = Column(Float, nullable=False, default=0.0)
+    unrealized_pnl = Column(Float, nullable=False, default=0.0)
+    equity = Column(Float, nullable=False, default=100.0)
+    open_positions = Column(Integer, nullable=False, default=0)
+    closed_trades = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (UniqueConstraint("month_key", "strategy_key", name="uq_paper_account_month_strategy"),)
+
+
+class PaperOrder(Base):
+    __tablename__ = "paper_orders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("paper_accounts.id"), nullable=False, index=True)
+    pair = Column(String, nullable=False, index=True)
+    market = Column(String, nullable=True)
+    coin = Column(String, nullable=True, index=True)
+    strategy = Column(String, nullable=False, index=True)
+    custom_strategy_id = Column(Integer, ForeignKey("custom_strategies.id"), nullable=True, index=True)
+    timeframe = Column(String, nullable=True)
+    side = Column(Integer, nullable=False)
+    status = Column(String, nullable=False, default="open", index=True)
+    entry_ts = Column(DateTime, nullable=False, index=True)
+    exit_ts = Column(DateTime, nullable=True, index=True)
+    entry_px = Column(Float, nullable=False)
+    exit_px = Column(Float, nullable=True)
+    stop_px = Column(Float, nullable=True)
+    target_px = Column(Float, nullable=True)
+    qty = Column(Float, nullable=False, default=0.0)
+    risk_usd = Column(Float, nullable=False, default=0.0)
+    realized_pnl = Column(Float, nullable=False, default=0.0)
+    unrealized_pnl = Column(Float, nullable=False, default=0.0)
+    exit_reason = Column(String, nullable=True)
+    payload = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (UniqueConstraint("account_id", "pair", "side", "entry_ts", name="uq_paper_order_account_pair_entry"),)
+
+
+class PaperOrderEvent(Base):
+    __tablename__ = "paper_order_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(Integer, ForeignKey("paper_orders.id"), nullable=True, index=True)
+    account_id = Column(Integer, ForeignKey("paper_accounts.id"), nullable=False, index=True)
+    ts = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    event_type = Column(String, nullable=False, index=True)
+    message = Column(Text, nullable=True)
+    payload = Column(JSON, nullable=False, default=dict)
+
+
 class SignalEvent(Base):
     __tablename__ = "signal_events"
 
