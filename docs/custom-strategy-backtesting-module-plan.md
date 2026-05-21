@@ -459,6 +459,48 @@ Exports trade ledger.
 
 Exports equity curve.
 
+### `GET /api/backtests/compare`
+
+Compares recent stored runs or a comma-separated list of run IDs:
+
+```text
+GET /api/backtests/compare?run_ids=12,13,14
+GET /api/backtests/compare?limit=10
+```
+
+Returns side-by-side return, portfolio Sharpe, active Sharpe, max drawdown, win
+rate, profit factor, exposure, trade count, and assumption warnings.
+
+### `GET /api/backtests/{run_id}/diagnostics`
+
+Returns CBT-style forensic diagnostics for a stored run:
+
+- long/short performance split
+- hourly win/loss and average PnL clustering
+- exit reason counts
+- fee impact as a share of gross profit
+- worst drawdown point
+- actionable recommendations derived from the run
+
+### `POST /api/backtests/walk-forward`
+
+Runs chronological walk-forward validation for a strategy/config without storing
+each fold as a permanent run. It reuses the same candle data and signal contract
+as normal backtests, then reports fold-by-fold out-of-sample metrics plus an
+aggregate robustness assessment.
+
+Request body matches `POST /api/backtests/run` with one extra field:
+
+```json
+{
+  "pair": "B-ETH_USDT",
+  "market": "ETHUSDT",
+  "strategy": "confluence",
+  "lookback_days": 180,
+  "folds": 4
+}
+```
+
 ## Database Design
 
 Add custom-strategy storage plus the backtest result tables:
@@ -631,7 +673,7 @@ Important limitation: Python in-process execution of DB-stored code is not a tru
 - Add date range selection.
 - Add multi-symbol batch backtesting.
 - Add parameter sweeps/optimization.
-- Add walk-forward validation.
+- Add walk-forward validation. Initial endpoint added at `POST /api/backtests/walk-forward`.
 - Add benchmark comparison.
 - Add adapter for `backtesting.py` if we need external optimization features.
 

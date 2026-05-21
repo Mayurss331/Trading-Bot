@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from datetime import datetime
 from typing import Any, Callable
 
@@ -214,6 +215,127 @@ async def run_and_store_backtest(cfg: BacktestConfig, progress: ProgressCallback
     })
     _emit_progress(progress, stage="completed", progress_value=1.0, message=f"Run #{run_id} completed.")
     return payload
+
+
+async def run_walk_forward_validation(cfg: BacktestConfig, folds: int = 4) -> dict:
+    cfg = cfg.normalized()
+    folds = max(2, min(int(folds or 4), 10))
+    loaded = await load_strategy(cfg)
+    bars, latest_closed, used_pair, used_source = await asyncio.to_thread(_sync_fetch_bars, cfg)
+    if bars.empty:
+        return {"ok": False, "message": "No candles returned for this pair/market."}
+
+    runtime_cfg = make_cfg(cfg.pair, cfg.market, cfg.mode, cfg.risk, cfg.lookback_days, timeframe=cfg.timeframe, exec_mode="paper")
+    ctx = StrategyContext(
+        pair=cfg.pair,
+        market=cfg.market,
+        mode=cfg.mode,
+        risk=cfg.risk,
+        allow_shorts=cfg.allow_shorts,
+        extras={
+            "latest_closed": latest_closed,
+            "strategy_id": loaded.id,
+            "strategy_title": loaded.title,
+            "strategy_description": loaded.description,
+        },
+    )
+    analysis = loaded.analyze(bars, ctx)
+    frame = analysis["frame"]
+    n = len(bars)
+    min_test = max(30, cfg.warmup_bars + 10)
+    if n < min_test * folds:
+        return {
+            "ok": False,
+            "message": f"Need at least {min_test * folds} bars for {folds} walk-forward folds; got {n}.",
+        }
+
+    fold_size = n // (folds + 1)
+    fold_results: list[dict[str, Any]] = []
+    for fold in range(folds):
+        train_end = fold_size * (fold + 1)
+        test_start = train_end
+        test_end = fold_size * (fold + 2) if fold < folds - 1 else n
+        if test_end - test_start < min_test:
+            continue
+        test_bars = bars.iloc[test_start:test_end]
+        test_frame = frame.reindex(test_bars.index)
+        fold_cfg = replace(cfg, warmup_bars=0, finalize_open_trade=True)
+        result = await asyncio.to_thread(run_backtest, test_bars, test_frame, ctx, fold_cfg, None, None)
+        summary = result.get("summary", {}) if result.get("ok") else {}
+        fold_results.append({
+            "fold": fold + 1,
+            "train_start": bars.index[0],
+            "train_end": bars.index[train_end - 1],
+            "test_start": test_bars.index[0],
+            "test_end": test_bars.index[-1],
+            "test_bars": len(test_bars),
+            "summary": summary,
+            "ok": bool(result.get("ok")),
+        })
+
+    if not fold_results:
+        return {"ok": False, "message": "No valid walk-forward folds could be built."}
+
+    sharpes = [
+        float(f["summary"].get("portfolio_sharpe") if f["summary"].get("portfolio_sharpe") is not None else f["summary"].get("sharpe"))
+        for f in fold_results
+        if f["summary"].get("portfolio_sharpe") is not None or f["summary"].get("sharpe") is not None
+    ]
+    returns = [
+        float(f["summary"].get("total_return_pct"))
+        for f in fold_results
+        if f["summary"].get("total_return_pct") is not None
+    ]
+    drawdowns = [
+        float(f["summary"].get("max_drawdown_pct"))
+        for f in fold_results
+        if f["summary"].get("max_drawdown_pct") is not None
+    ]
+    trades = [int(f["summary"].get("trades") or 0) for f in fold_results]
+    positive_return_folds = sum(1 for r in returns if r > 0)
+    warnings: list[str] = []
+    if sharpes and min(sharpes) < 0:
+        warnings.append("At least one fold has negative portfolio Sharpe.")
+    if returns and positive_return_folds < max(1, len(returns) // 2):
+        warnings.append("Fewer than half the folds are profitable.")
+    if trades and min(trades) < 10:
+        warnings.append("At least one fold has fewer than 10 trades; fold-level statistics are weak.")
+
+    aggregate = {
+        "folds": len(fold_results),
+        "positive_return_folds": positive_return_folds,
+        "avg_return_pct": round(sum(returns) / len(returns), 2) if returns else None,
+        "median_return_pct": round(float(pd.Series(returns).median()), 2) if returns else None,
+        "avg_portfolio_sharpe": round(sum(sharpes) / len(sharpes), 3) if sharpes else None,
+        "median_portfolio_sharpe": round(float(pd.Series(sharpes).median()), 3) if sharpes else None,
+        "worst_drawdown_pct": round(min(drawdowns), 2) if drawdowns else None,
+        "total_trades": sum(trades),
+        "assessment": "robust" if not warnings and positive_return_folds == len(fold_results) else "fragile",
+        "warnings": warnings,
+    }
+    return clean({
+        "ok": True,
+        "strategy": {
+            "id": loaded.id,
+            "name": loaded.title,
+            "version": loaded.version,
+            "custom_strategy_id": loaded.custom_strategy_id,
+        },
+        "data": {
+            "pair": cfg.pair,
+            "market": cfg.market,
+            "mode": cfg.mode,
+            "timeframe": runtime_cfg.timeframe,
+            "bars": len(bars),
+            "used_pair": used_pair,
+            "used_source": used_source,
+            "start": bars.index.min(),
+            "end": bars.index.max(),
+        },
+        "config": cfg.to_dict(),
+        "aggregate": aggregate,
+        "folds": fold_results,
+    })
 
 
 async def store_backtest_result(

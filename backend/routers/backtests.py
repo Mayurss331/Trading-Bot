@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import csv
 import io
+from collections import defaultdict
 from datetime import datetime
 
 from fastapi import APIRouter
@@ -13,7 +14,12 @@ from sqlalchemy.exc import IntegrityError
 
 from backend.backtesting.config import BacktestConfig
 from backend.backtesting.jobs import complete_job, create_job, fail_job, job_payload, update_job
-from backend.backtesting.service import get_backtest_run, run_and_store_backtest, validate_custom_strategy
+from backend.backtesting.service import (
+    get_backtest_run,
+    run_and_store_backtest,
+    run_walk_forward_validation,
+    validate_custom_strategy,
+)
 from backend.backtesting.strategy_loader import validate_slug
 from backend.db.database import AsyncSessionLocal
 from backend.db.models import BacktestEquityPoint, BacktestRun, BacktestTrade, CustomStrategy
@@ -69,6 +75,10 @@ class BacktestRequest(BaseModel):
     ai_candles: int = 80
     ai_model: str = "gpt-5.4-mini"
     limit: int | None = None
+
+
+class WalkForwardRequest(BacktestRequest):
+    folds: int = 4
 
 
 def _custom_strategy_payload(row: CustomStrategy, include_code: bool = False) -> dict:
@@ -212,6 +222,18 @@ async def run_backtest(body: BacktestRequest) -> JSONResponse:
     return JSONResponse(clean(result), status_code=200 if result.get("ok") else 400)
 
 
+@router.post("/walk-forward")
+async def walk_forward(body: WalkForwardRequest) -> JSONResponse:
+    payload = body.model_dump() if hasattr(body, "model_dump") else body.dict()
+    folds = int(payload.pop("folds", 4) or 4)
+    cfg = BacktestConfig(**payload).normalized()
+    try:
+        result = await run_walk_forward_validation(cfg, folds=folds)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=400)
+    return JSONResponse(clean(result), status_code=200 if result.get("ok") else 400)
+
+
 async def _run_backtest_job(job_id: str, cfg: BacktestConfig) -> None:
     update_job(job_id, status="running", stage="starting", progress=0.01, message="Starting backtest.")
 
@@ -271,6 +293,149 @@ async def list_runs(limit: int = 25) -> JSONResponse:
             }
             for row in rows
         ],
+    }))
+
+
+@router.get("/compare")
+async def compare_runs(run_ids: str = "", limit: int = 10) -> JSONResponse:
+    ids: list[int] = []
+    for raw in (run_ids or "").split(","):
+        raw = raw.strip()
+        if raw.isdigit():
+            ids.append(int(raw))
+    async with AsyncSessionLocal() as db:
+        if ids:
+            result = await db.execute(select(BacktestRun).where(BacktestRun.id.in_(ids)))
+        else:
+            limit = max(2, min(limit, 25))
+            result = await db.execute(select(BacktestRun).order_by(BacktestRun.created_at.desc()).limit(limit))
+        rows = result.scalars().all()
+    if not rows:
+        return JSONResponse({"ok": False, "message": "No backtest runs found."}, status_code=404)
+
+    def metric(row: BacktestRun, key: str) -> float | None:
+        value = (row.summary or {}).get(key)
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    comparisons = []
+    for row in sorted(rows, key=lambda r: r.created_at or datetime.min):
+        summary = row.summary or {}
+        comparisons.append({
+            "id": row.id,
+            "created_at": row.created_at,
+            "strategy": row.custom_strategy_title or row.strategy,
+            "pair": row.pair,
+            "market": row.market,
+            "timeframe": row.timeframe,
+            "bars": row.bars_count,
+            "return_pct": summary.get("total_return_pct"),
+            "portfolio_sharpe": summary.get("portfolio_sharpe", summary.get("sharpe")),
+            "active_sharpe": summary.get("active_sharpe"),
+            "max_drawdown_pct": summary.get("max_drawdown_pct"),
+            "win_rate_pct": summary.get("win_rate_pct"),
+            "profit_factor": summary.get("profit_factor"),
+            "trades": summary.get("trades"),
+            "exposure_pct": summary.get("exposure_pct"),
+            "warnings": summary.get("assumption_warnings", []),
+        })
+
+    best_return = max(rows, key=lambda r: metric(r, "total_return_pct") if metric(r, "total_return_pct") is not None else float("-inf"))
+    best_sharpe = max(rows, key=lambda r: metric(r, "portfolio_sharpe") if metric(r, "portfolio_sharpe") is not None else (metric(r, "sharpe") if metric(r, "sharpe") is not None else float("-inf")))
+    best_drawdown = max(rows, key=lambda r: metric(r, "max_drawdown_pct") if metric(r, "max_drawdown_pct") is not None else float("-inf"))
+    return JSONResponse(clean({
+        "ok": True,
+        "count": len(comparisons),
+        "best": {
+            "return_run_id": best_return.id,
+            "sharpe_run_id": best_sharpe.id,
+            "drawdown_run_id": best_drawdown.id,
+        },
+        "runs": comparisons,
+    }))
+
+
+@router.get("/{run_id}/diagnostics")
+async def run_diagnostics(run_id: int) -> JSONResponse:
+    async with AsyncSessionLocal() as db:
+        run = await db.get(BacktestRun, run_id)
+        if run is None:
+            return JSONResponse({"ok": False, "message": "Backtest run not found."}, status_code=404)
+        trades_result = await db.execute(
+            select(BacktestTrade).where(BacktestTrade.run_id == run_id).order_by(BacktestTrade.entry_ts.asc())
+        )
+        equity_result = await db.execute(
+            select(BacktestEquityPoint).where(BacktestEquityPoint.run_id == run_id).order_by(BacktestEquityPoint.ts.asc())
+        )
+        trades = trades_result.scalars().all()
+        equity = equity_result.scalars().all()
+
+    side_rows: dict[str, list[BacktestTrade]] = defaultdict(list)
+    hour_rows: dict[int, list[BacktestTrade]] = defaultdict(list)
+    reason_counts: dict[str, int] = defaultdict(int)
+    for trade in trades:
+        side_rows[trade.side].append(trade)
+        if trade.entry_ts is not None:
+            hour_rows[int(trade.entry_ts.hour)].append(trade)
+        reason_counts[str(trade.exit_reason or "UNKNOWN")] += 1
+
+    def trade_stats(rows: list[BacktestTrade]) -> dict:
+        if not rows:
+            return {"trades": 0, "win_rate_pct": None, "net_pnl": 0.0, "avg_pnl": None}
+        wins = [t for t in rows if float(t.net_pnl or 0.0) > 0]
+        net = sum(float(t.net_pnl or 0.0) for t in rows)
+        return {
+            "trades": len(rows),
+            "win_rate_pct": round(len(wins) / len(rows) * 100, 2),
+            "net_pnl": round(net, 2),
+            "avg_pnl": round(net / len(rows), 2),
+        }
+
+    hourly = [
+        {"hour": hour, **trade_stats(rows)}
+        for hour, rows in sorted(hour_rows.items())
+    ]
+    best_hours = sorted(hourly, key=lambda r: r["avg_pnl"] if r["avg_pnl"] is not None else -10**12, reverse=True)[:3]
+    worst_hours = sorted(hourly, key=lambda r: r["avg_pnl"] if r["avg_pnl"] is not None else 10**12)[:3]
+
+    gross_profit = sum(float(t.gross_pnl or 0.0) for t in trades if float(t.gross_pnl or 0.0) > 0)
+    total_fees = sum(float(t.fees or 0.0) for t in trades)
+    fee_pct = (total_fees / gross_profit * 100) if gross_profit > 0 else None
+    worst_equity = min(equity, key=lambda e: float(e.drawdown_pct or 0.0), default=None)
+    summary = run.summary or {}
+    recommendations: list[str] = []
+    recommendations.extend(summary.get("assumption_warnings") or [])
+    if float(summary.get("profit_factor") or 0.0) < 1.2:
+        recommendations.append("Profit factor is weak; inspect exits, costs, and low-quality signal filters first.")
+    if int(summary.get("trades") or 0) < 30:
+        recommendations.append("Trade count is low; validate on a longer sample before tuning parameters.")
+    if fee_pct is not None and fee_pct > 25:
+        recommendations.append("Fees consume more than 25% of gross profit; test lower-frequency entries or wider targets.")
+    if hourly and best_hours and worst_hours:
+        recommendations.append("Use hourly diagnostics to test a time-of-day filter in a separate experiment.")
+
+    return JSONResponse(clean({
+        "ok": True,
+        "run_id": run.id,
+        "strategy": run.custom_strategy_title or run.strategy,
+        "summary": summary,
+        "side_stats": {side: trade_stats(rows) for side, rows in sorted(side_rows.items())},
+        "hourly_stats": hourly,
+        "best_hours": best_hours,
+        "worst_hours": worst_hours,
+        "exit_reasons": dict(sorted(reason_counts.items())),
+        "fee_impact": {
+            "gross_profit": round(gross_profit, 2),
+            "total_fees": round(total_fees, 2),
+            "fees_pct_of_gross_profit": round(fee_pct, 2) if fee_pct is not None else None,
+        },
+        "drawdown": {
+            "worst_time": worst_equity.ts if worst_equity else None,
+            "worst_drawdown_pct": worst_equity.drawdown_pct if worst_equity else None,
+        },
+        "recommendations": recommendations,
     }))
 
 

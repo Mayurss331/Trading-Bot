@@ -33,7 +33,7 @@ TP1_FRAC = 0.5
 
 def _resample_ohlc(bars: pd.DataFrame, rule: str) -> pd.DataFrame:
     ohlc = (
-        bars.resample(rule, label="left", closed="left")
+        bars.resample(rule, label="right", closed="left")
         .agg(
             Open=("Open", "first"),
             High=("High", "max"),
@@ -46,10 +46,10 @@ def _resample_ohlc(bars: pd.DataFrame, rule: str) -> pd.DataFrame:
     return ohlc
 
 
-def _pivot_flags(high: pd.Series, low: pd.Series, left: int, right: int) -> tuple[pd.Series, pd.Series]:
+def _confirmed_pivot_levels(high: pd.Series, low: pd.Series, left: int, right: int) -> tuple[pd.Series, pd.Series]:
     n = len(high)
-    swing_high = np.zeros(n, dtype=bool)
-    swing_low = np.zeros(n, dtype=bool)
+    swing_high = np.full(n, np.nan)
+    swing_low = np.full(n, np.nan)
     high_values = high.to_numpy()
     low_values = low.to_numpy()
     for i in range(left, n - right):
@@ -59,10 +59,11 @@ def _pivot_flags(high: pd.Series, low: pd.Series, left: int, right: int) -> tupl
             continue
         window_high = high_values[i - left : i + right + 1]
         window_low = low_values[i - left : i + right + 1]
+        confirm_i = i + right
         if np.nanmax(window_high) == hi and hi > np.nanmax(high_values[i - left : i]):
-            swing_high[i] = True
+            swing_high[confirm_i] = hi
         if np.nanmin(window_low) == lo and lo < np.nanmin(low_values[i - left : i]):
-            swing_low[i] = True
+            swing_low[confirm_i] = lo
     return pd.Series(swing_high, index=high.index), pd.Series(swing_low, index=low.index)
 
 
@@ -78,9 +79,9 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
         frame["reason"] = "Waiting for enough 1H/1D bars to build Daily Sweep context."
         return finalize(META, frame, ctx, notes=["Insufficient higher timeframe data"])
 
-    h_swing_high, h_swing_low = _pivot_flags(hourly["High"], hourly["Low"], PIVOT_LEFT, PIVOT_RIGHT)
-    hourly["swing_high"] = hourly["High"].where(h_swing_high)
-    hourly["swing_low"] = hourly["Low"].where(h_swing_low)
+    h_swing_high, h_swing_low = _confirmed_pivot_levels(hourly["High"], hourly["Low"], PIVOT_LEFT, PIVOT_RIGHT)
+    hourly["swing_high"] = h_swing_high
+    hourly["swing_low"] = h_swing_low
     hourly["last_swing_high"] = hourly["swing_high"].ffill()
     hourly["last_swing_low"] = hourly["swing_low"].ffill()
 
@@ -94,12 +95,12 @@ def analyze(bars: pd.DataFrame, ctx: StrategyContext) -> dict:
     frame["bias"] = hourly["bias"].reindex(frame.index, method="ffill").fillna(0).astype(int)
     frame["score"] = frame["bias"]
 
-    daily_levels = daily[["High", "Low"]].rename(columns={"High": "prev_day_high", "Low": "prev_day_low"}).shift(1)
+    daily_levels = daily[["High", "Low"]].rename(columns={"High": "prev_day_high", "Low": "prev_day_low"})
     frame = frame.join(daily_levels.reindex(frame.index, method="ffill"))
 
-    f_swing_high, f_swing_low = _pivot_flags(frame["High"], frame["Low"], PIVOT_LEFT, PIVOT_RIGHT)
-    frame["swing_high"] = frame["High"].where(f_swing_high)
-    frame["swing_low"] = frame["Low"].where(f_swing_low)
+    f_swing_high, f_swing_low = _confirmed_pivot_levels(frame["High"], frame["Low"], PIVOT_LEFT, PIVOT_RIGHT)
+    frame["swing_high"] = f_swing_high
+    frame["swing_low"] = f_swing_low
     frame["last_swing_high"] = frame["swing_high"].ffill()
     frame["last_swing_low"] = frame["swing_low"].ffill()
 

@@ -27,6 +27,24 @@ def _max_consecutive(flags: list[bool]) -> int:
     return best
 
 
+def _annualized_return_stats(
+    returns: pd.Series,
+    bars_per_year: float,
+    risk_free_rate: float,
+) -> dict[str, float | None]:
+    if len(returns) <= 1:
+        return {"vol": None, "sharpe": None, "sortino": None}
+    rf_bar = risk_free_rate / bars_per_year if bars_per_year > 0 else 0.0
+    vol = float(returns.std() * math.sqrt(bars_per_year))
+    excess_mean = (returns.mean() - rf_bar) * bars_per_year
+    sharpe = float(excess_mean / vol) if vol > 0 else None
+
+    down = returns[returns < 0]
+    down_vol = float(down.std() * math.sqrt(bars_per_year)) if len(down) > 1 else None
+    sortino = float(excess_mean / down_vol) if down_vol and down_vol > 0 else None
+    return {"vol": vol, "sharpe": sharpe, "sortino": sortino}
+
+
 def monte_carlo_drawdown(
     trade_returns: list[float],
     n_simulations: int = 1000,
@@ -91,22 +109,15 @@ def compute_summary(
         else None
     )
 
-    # Use only bars where a position was open — excludes idle cash which deflates vol
-    rf_bar = risk_free_rate / bars_per_year if bars_per_year > 0 else 0.0
+    portfolio_stats = _annualized_return_stats(all_rets, bars_per_year, risk_free_rate)
     if "position_value" in equity.columns:
         active_mask = equity["position_value"].reindex(all_rets.index).fillna(0) > 0
         active_rets = all_rets[active_mask]
+        exposure_pct = float(active_mask.mean() * 100) if len(active_mask) else 0.0
     else:
         active_rets = all_rets
-    rets = active_rets if len(active_rets) > 10 else all_rets
-
-    vol = float(rets.std() * math.sqrt(bars_per_year)) if len(rets) > 1 else None
-    excess_mean = (rets.mean() - rf_bar) * bars_per_year
-    sharpe = float(excess_mean / vol) if vol and vol > 0 else None
-
-    down = rets[rets < 0]
-    down_vol = float(down.std() * math.sqrt(bars_per_year)) if len(down) > 1 else None
-    sortino = float(excess_mean / down_vol) if down_vol and down_vol > 0 else None
+        exposure_pct = 100.0 if len(all_rets) else 0.0
+    active_stats = _annualized_return_stats(active_rets, bars_per_year, risk_free_rate)
 
     roll_max = eq.cummax()
     dd = (eq - roll_max) / roll_max.replace(0, np.nan)
@@ -174,9 +185,19 @@ def compute_summary(
         "final_equity": _round(final_equity, 2),
         "total_return_pct": _round(total_return * 100, 2),
         "cagr_pct": _round(cagr * 100 if cagr is not None else None, 2),
-        "volatility_pct": _round(vol * 100 if vol is not None else None, 2),
-        "sharpe": _round(sharpe, 3),
-        "sortino": _round(sortino, 3),
+        "volatility_pct": _round(portfolio_stats["vol"] * 100 if portfolio_stats["vol"] is not None else None, 2),
+        "sharpe": _round(portfolio_stats["sharpe"], 3),
+        "sortino": _round(portfolio_stats["sortino"], 3),
+        "portfolio_volatility_pct": _round(
+            portfolio_stats["vol"] * 100 if portfolio_stats["vol"] is not None else None, 2
+        ),
+        "portfolio_sharpe": _round(portfolio_stats["sharpe"], 3),
+        "portfolio_sortino": _round(portfolio_stats["sortino"], 3),
+        "active_volatility_pct": _round(active_stats["vol"] * 100 if active_stats["vol"] is not None else None, 2),
+        "active_sharpe": _round(active_stats["sharpe"], 3),
+        "active_sortino": _round(active_stats["sortino"], 3),
+        "exposure_pct": _round(exposure_pct, 2),
+        "risk_metric_basis": "portfolio",
         "max_drawdown_pct": _round(max_dd * 100, 2),
         "calmar": _round(calmar, 3),
         "ulcer_index": _round(ulcer_index, 3),

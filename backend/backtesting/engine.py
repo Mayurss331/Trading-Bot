@@ -791,6 +791,24 @@ def run_backtest(
     summary["risk_reward_ratio"] = cfg.risk_reward_ratio
     summary["target_mode"] = cfg.target_mode
     summary["ai_verified_trades"] = sum(1 for t in trades if t.get("ai_confidence") is not None)
+    assumption_warnings: list[str] = []
+    if cfg.fill_model == "close":
+        assumption_warnings.append(
+            "fill_model=close can be optimistic when signals use the same candle close; prefer next_open for validation."
+        )
+    if len(trades) < 30:
+        assumption_warnings.append("Fewer than 30 closed trades; results are not statistically strong yet.")
+    if cfg.lookback_days < 90:
+        assumption_warnings.append("Lookback is under 90 days; run longer windows and walk-forward tests before trusting it.")
+    if cfg.commission_bps == 0 and cfg.spread_bps == 0 and cfg.slippage_bps == 0:
+        assumption_warnings.append("Costs are all zero; add realistic commission, spread, and slippage before going live.")
+    if summary.get("exposure_pct") is not None and float(summary.get("exposure_pct") or 0.0) < 10.0:
+        assumption_warnings.append("Exposure is below 10%; active-period metrics may not reflect full portfolio performance.")
+    if cfg.strategy == "daily_sweep":
+        assumption_warnings.append(
+            "Daily Sweep uses confirmed pivot levels only after right-side bars close; expect fewer but more realistic signals."
+        )
+    summary["assumption_warnings"] = assumption_warnings
 
     return {
         "ok": True,
