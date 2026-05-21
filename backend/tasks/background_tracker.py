@@ -21,11 +21,13 @@ logger = logging.getLogger(__name__)
 _EXECUTION_STATE: dict[str, dict[str, object]] = {}
 EXECUTABLE_STRATEGIES = {
     "confluence",
+    "daily_sweep",
     "trend_following",
     "mean_reversion",
     "mixed_consensus",
     "volatility_squeeze",
     "precision_momentum",
+    "volume_profile",
 }
 SCANNER_ONLY_STRATEGIES = {"arbitrage", "funding_basis", "pairs_stat_arb"}
 
@@ -138,18 +140,71 @@ def _build_strategy_frame(strategy_id: str, bars: pd.DataFrame, cfg: object, cus
     return frame.dropna(subset=["Close"]).copy()
 
 
-def _execute_one(coin: str, strategy_id: str, risk: float, lookback_days: int, timeframe: str | None = None, exec_mode: str = "paper", custom_analyzer=None) -> list[str]:
+def _trade_from_open_state(pair: str, state: object, cfg: object, strategy_id: str) -> dict | None:
+    if not getattr(state, "entry_ts", None) or not getattr(state, "side", 0):
+        return None
+    return {
+        "pair": pair,
+        "side": int(state.side),
+        "entry_ts": state.entry_ts,
+        "exit_ts": None,
+        "entry_px": float(state.entry_px or 0.0),
+        "exit_px": None,
+        "stop_px": float(state.stop_px or 0.0),
+        "target_px": float(state.target_px or 0.0),
+        "qty": float(state.qty or 0.0),
+        "risk_usd": float(getattr(cfg, "risk_dollars", 0.0) or 0.0),
+        "pnl": None,
+        "exit_reason": None,
+        "mode": "futures",
+        "strategy": strategy_id,
+        "execution_mode": "paper",
+    }
+
+
+def _process_bar_and_capture_trade(
+    ts: pd.Timestamp,
+    row: pd.Series,
+    state: object,
+    cfg: object,
+    frame: pd.DataFrame,
+    pair: str,
+    strategy_id: str,
+) -> tuple[list[str], list[dict]]:
+    before_side = int(getattr(state, "side", 0) or 0)
+    before_entry_ts = getattr(state, "entry_ts", None)
+    events = bot.process_closed_bar(ts, row, state, cfg, frame.loc[:ts])
+    after_side = int(getattr(state, "side", 0) or 0)
+    after_entry_ts = getattr(state, "entry_ts", None)
+    trades: list[dict] = []
+    if before_side == 0 and after_side != 0 and after_entry_ts is not None and after_entry_ts != before_entry_ts:
+        trade = _trade_from_open_state(pair, state, cfg, strategy_id)
+        if trade:
+            trades.append(trade)
+    return events, trades
+
+
+def _execute_one(
+    coin: str,
+    strategy_id: str,
+    risk: float,
+    lookback_days: int,
+    timeframe: str | None = None,
+    exec_mode: str = "paper",
+    custom_analyzer=None,
+) -> tuple[list[str], list[dict]]:
     pair = futures_pair_for_coin(coin)
     market = futures_market_for_coin(coin)
     if custom_analyzer is None:
         strategy_id = normalize_strategy_id(strategy_id)
         if strategy_id not in EXECUTABLE_STRATEGIES:
-            return [f"{pair}: background executor skipped scanner-only strategy {strategy_id}."]
+            return [f"{pair}: background executor skipped scanner-only strategy {strategy_id}."], []
 
-    cfg = make_cfg(pair, market, "futures", risk, lookback_days, timeframe=timeframe, exec_mode=exec_mode, strategy=strategy_id)
+    cfg = make_cfg(pair, market, "futures", risk, lookback_days, timeframe=timeframe, exec_mode="paper", strategy=strategy_id)
     cfg.allow_shorts = _env_bool("BACKGROUND_ALLOW_SHORTS", False)
 
-    slot = _EXECUTION_STATE.setdefault(pair, {"state": bot.TradeState(), "last_ts": None})
+    state_key = f"{pair}|{strategy_id}|{getattr(custom_analyzer, 'custom_strategy_id', '') or 'builtin'}"
+    slot = _EXECUTION_STATE.setdefault(state_key, {"state": bot.TradeState(), "last_ts": None})
     state = slot["state"]
     last_ts = slot["last_ts"]
     assert isinstance(state, bot.TradeState)
@@ -162,13 +217,14 @@ def _execute_one(coin: str, strategy_id: str, risk: float, lookback_days: int, t
         timeframe=cfg.timeframe,
     )
     if bars.empty:
-        return [f"{pair}: no bars fetched for background execution."]
+        return [f"{pair}: no bars fetched for background execution."], []
     bars = bars[bars.index <= latest_closed]
     frame = _build_strategy_frame(strategy_id, bars, cfg, custom_analyzer=custom_analyzer)
     if frame.empty:
-        return [f"{pair}: {strategy_id} warmup in progress."]
+        return [f"{pair}: {strategy_id} warmup in progress."], []
 
     events: list[str] = []
+    opened_trades: list[dict] = []
     if last_ts is None:
         boot_cfg = bot.RuntimeConfig(**{**cfg.__dict__, "place_orders": False})
         for ts, row in frame.iterrows():
@@ -183,79 +239,106 @@ def _execute_one(coin: str, strategy_id: str, risk: float, lookback_days: int, t
             for ev in bot.sync_futures_position_state(last_ts, state, cfg):
                 events.append(ev)
             last_row = frame.loc[last_ts]
-            for ev in bot.process_closed_bar(last_ts, last_row, state, cfg, frame.loc[:last_ts]):
-                events.append(ev)
-        return events
+            bar_events, trades = _process_bar_and_capture_trade(
+                last_ts, last_row, state, cfg, frame, pair, strategy_id
+            )
+            events.extend(bar_events)
+            opened_trades.extend(trades)
+        return events, opened_trades
 
     assert isinstance(last_ts, pd.Timestamp)
     new_rows = frame[frame.index > last_ts]
     for ts, row in new_rows.iterrows():
         for ev in bot.sync_futures_position_state(ts, state, cfg):
             events.append(ev)
-        for ev in bot.process_closed_bar(ts, row, state, cfg, frame.loc[:ts]):
-            events.append(ev)
+        bar_events, trades = _process_bar_and_capture_trade(ts, row, state, cfg, frame, pair, strategy_id)
+        events.extend(bar_events)
+        opened_trades.extend(trades)
         slot["last_ts"] = ts
     if used_pair or used_source:
         cfg.candle_pair = used_pair
         cfg.data_source = used_source
-    return events
+    return events, opened_trades
+
+
+def _paper_strategy_selections(settings: dict, fallback_strategy_id: str) -> list[str]:
+    raw = settings.get("paperStrategies")
+    if isinstance(raw, list):
+        selections = [str(item).strip() for item in raw if str(item).strip()]
+    else:
+        selections = []
+    if not selections:
+        custom_id = settings.get("customStrategyId")
+        selections = [f"custom:{custom_id}" if custom_id else f"builtin:{fallback_strategy_id}"]
+    return selections[:20]
+
+
+async def _resolve_strategy_selection(selection: str, fallback_strategy_id: str):
+    kind, _, raw_id = selection.partition(":")
+    if not raw_id:
+        kind, raw_id = "builtin", kind
+    if kind == "custom":
+        try:
+            custom_analyzer = await _load_custom_analyzer(int(raw_id))
+        except (TypeError, ValueError):
+            custom_analyzer = None
+        if custom_analyzer is None:
+            logger.warning("Custom paper strategy %s unavailable; skipping.", raw_id)
+            return None, None, None
+        return custom_analyzer.id, custom_analyzer, selection
+    strategy_id = normalize_strategy_id(raw_id or fallback_strategy_id)
+    if strategy_id in SCANNER_ONLY_STRATEGIES or strategy_id not in EXECUTABLE_STRATEGIES:
+        logger.info("Paper strategy skipped: %s is scanner-only or not executable.", strategy_id)
+        return None, None, None
+    return strategy_id, None, f"builtin:{strategy_id}"
 
 
 async def _execute_saved_tracker_orders(settings: dict, coins: list[str], strategy_id: str, risk: float, lookback_days: int, timeframe: str | None = None) -> None:
-    exec_mode = str(settings.get("executionMode") or "paper").lower()
-    if exec_mode not in {"paper", "real"}:
-        exec_mode = "paper"
+    # This path is intentionally paper-only: it watches live candles and stores
+    # simulated orders per selected strategy without touching the exchange.
+    exec_mode = "paper"
 
-    if exec_mode == "real":
-        if not _env_bool("PLACE_ORDERS") and not _env_bool("COINDCX_PLACE_ORDERS") and not _env_bool("BOT_PLACE_ORDERS"):
-            logger.info("Background executor: real mode requires PLACE_ORDERS env var. Running paper instead.")
-            exec_mode = "paper"
-
-    # Load custom strategy if one is selected
-    custom_strategy_id = settings.get("customStrategyId")
     custom_analyzer = None
-    effective_strategy_id = strategy_id
-    if custom_strategy_id:
-        try:
-            custom_analyzer = await _load_custom_analyzer(int(custom_strategy_id))
-        except (TypeError, ValueError):
-            custom_analyzer = None
-        if custom_analyzer is not None:
-            effective_strategy_id = custom_analyzer.id
-            logger.info("Background executor using custom strategy: %s (id=%s)", effective_strategy_id, custom_strategy_id)
-        else:
-            logger.warning("Custom strategy id=%s unavailable; falling back to %s.", custom_strategy_id, strategy_id)
-
-    if custom_analyzer is None:
-        effective_strategy_id = normalize_strategy_id(strategy_id)
-        if effective_strategy_id in SCANNER_ONLY_STRATEGIES or effective_strategy_id not in EXECUTABLE_STRATEGIES:
-            logger.info("Background executor skipped: strategy %s is scanner-only or not executable.", effective_strategy_id)
-            return
+    resolved = []
+    for selection in _paper_strategy_selections(settings, strategy_id):
+        item = await _resolve_strategy_selection(selection, strategy_id)
+        if item[0]:
+            resolved.append(item)
+    if not resolved:
+        return
 
     max_symbols = max(1, min(int(float(os.getenv("BACKGROUND_EXECUTOR_MAX_SYMBOLS", "3"))), 12))
-    for coin in coins[:max_symbols]:
-        try:
-            events = await asyncio.to_thread(
-                _execute_one, coin, effective_strategy_id, risk, lookback_days, timeframe, exec_mode, custom_analyzer
-            )
-            for event in events:
-                logger.info("Background executor [%s]: %s", exec_mode, event)
+    for effective_strategy_id, custom_analyzer, selection in resolved:
+        logger.info("Paper executor watching %s for strategy %s.", ",".join(coins[:max_symbols]), selection)
+        for coin in coins[:max_symbols]:
+            try:
+                events, opened_trades = await asyncio.to_thread(
+                    _execute_one, coin, effective_strategy_id, risk, lookback_days, timeframe, exec_mode, custom_analyzer
+                )
+                for event in events:
+                    logger.info("Paper executor [%s]: %s", effective_strategy_id, event)
 
-            # Drain completed trades and persist to DB
-            pending = bot.drain_completed_trades()
-            for trade in pending:
-                trade.setdefault("strategy", effective_strategy_id)
-                # Paper futures run through spot path in bot; fix mode label
-                if exec_mode == "paper" and trade.get("mode") == "spot":
-                    trade["mode"] = "futures"
-                try:
-                    await store_trade(trade)
-                except Exception as exc:
-                    logger.warning("Failed to store trade for %s: %s", coin, exc)
-            if pending:
-                logger.info("Background executor stored %d trade(s) for %s [%s].", len(pending), coin, exec_mode)
-        except Exception as exc:
-            logger.warning("Background executor failed for %s: %s", coin, exc)
+                for trade in opened_trades:
+                    try:
+                        await store_trade(trade)
+                    except Exception as exc:
+                        logger.warning("Failed to store open paper trade for %s/%s: %s", coin, effective_strategy_id, exc)
+
+                pending = bot.drain_completed_trades()
+                for trade in pending:
+                    trade.setdefault("strategy", effective_strategy_id)
+                    trade["execution_mode"] = "paper"
+                    if trade.get("mode") == "spot":
+                        trade["mode"] = "futures"
+                    try:
+                        await store_trade(trade)
+                    except Exception as exc:
+                        logger.warning("Failed to store closed paper trade for %s/%s: %s", coin, effective_strategy_id, exc)
+                total = len(opened_trades) + len(pending)
+                if total:
+                    logger.info("Paper executor stored %d order update(s) for %s [%s].", total, coin, effective_strategy_id)
+            except Exception as exc:
+                logger.warning("Paper executor failed for %s/%s: %s", coin, effective_strategy_id, exc)
 
 
 async def scan_saved_tracker_coins() -> None:

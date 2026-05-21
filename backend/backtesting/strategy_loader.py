@@ -30,6 +30,8 @@ BLOCKED_IMPORT_ROOTS = {
     "builtins",
 }
 
+CUSTOM_DEFAULT_CHART_CONFIG = {"overlays": [], "signals": True, "extra_cols": [], "panels": []}
+
 
 @dataclass(frozen=True)
 class LoadedStrategy:
@@ -123,12 +125,14 @@ def _normalize_custom_result(result: dict, meta: StrategyMeta, bars: pd.DataFram
 def _validate_chart_config(raw: object) -> dict:
     """Sanitize a CHART_CONFIG from a strategy module."""
     if not isinstance(raw, dict):
-        return dict(DEFAULT_CHART_CONFIG)
-    valid_overlays = {"ema", "bb", "supertrend", "sweep"}
+        return dict(CUSTOM_DEFAULT_CHART_CONFIG)
+    valid_overlays = {"ema", "bb", "supertrend", "sweep", "volume_profile"}
+    valid_panels = {"score", "rsi"}
     overlays = [o for o in (raw.get("overlays") or []) if isinstance(o, str) and o in valid_overlays]
+    panels = [p for p in (raw.get("panels") or []) if isinstance(p, str) and p in valid_panels]
     signals = bool(raw.get("signals", True))
     extra_cols = [c for c in (raw.get("extra_cols") or []) if isinstance(c, str) and c.isidentifier()][:20]
-    return {"overlays": overlays, "signals": signals, "extra_cols": extra_cols}
+    return {"overlays": overlays, "signals": signals, "extra_cols": extra_cols, "panels": panels}
 
 
 def compile_custom_strategy(row: CustomStrategy) -> LoadedStrategy:

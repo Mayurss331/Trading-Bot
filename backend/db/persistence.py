@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy import select
 
 from .database import AsyncSessionLocal
 from .models import AccountSnapshot, PositionSnapshot, SignalEvent, Trade, UserSetting
@@ -34,9 +35,31 @@ async def save_user_setting(key: str, payload: dict) -> None:
 
 async def store_trade(t: dict) -> None:
     async with AsyncSessionLocal() as db:
-        db.add(Trade(
+        entry_ts = t.get("entry_ts")
+        side = int(t.get("side") or 0)
+        pair = str(t.get("pair") or "")
+        strategy = t.get("strategy")
+        execution_mode = str(t.get("execution_mode") or "paper")
+
+        existing = None
+        if entry_ts and pair and side:
+            result = await db.execute(
+                select(Trade)
+                .where(
+                    Trade.pair == pair,
+                    Trade.side == side,
+                    Trade.entry_ts == entry_ts,
+                    Trade.strategy == strategy,
+                    Trade.execution_mode == execution_mode,
+                )
+                .order_by(Trade.id.desc())
+                .limit(1)
+            )
+            existing = result.scalar_one_or_none()
+
+        values = dict(
             pair=str(t.get("pair") or ""),
-            side=int(t.get("side") or 0),
+            side=side,
             entry_ts=t.get("entry_ts"),
             exit_ts=t.get("exit_ts"),
             entry_px=float(t.get("entry_px") or 0.0),
@@ -48,9 +71,14 @@ async def store_trade(t: dict) -> None:
             pnl=_float_or_none(t.get("pnl")),
             exit_reason=t.get("exit_reason"),
             mode=t.get("mode"),
-            strategy=t.get("strategy"),
-            execution_mode=str(t.get("execution_mode") or "paper"),
-        ))
+            strategy=strategy,
+            execution_mode=execution_mode,
+        )
+        if existing is not None:
+            for key, value in values.items():
+                setattr(existing, key, value)
+        else:
+            db.add(Trade(**values))
         await db.commit()
 
 

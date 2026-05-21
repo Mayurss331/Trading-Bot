@@ -71,7 +71,12 @@ from backend.routers.settings import router as settings_router  # noqa: E402
 from backend.routers.history import router as history_router  # noqa: E402
 from backend.routers.volatility_scanner import router as volatility_scanner_router  # noqa: E402
 from backend.routers.expert_picks import router as expert_picks_router  # noqa: E402
-from backend.routers.reports import router as reports_router, dispatch_report, _parse_emails  # noqa: E402
+from backend.routers.reports import (  # noqa: E402
+    router as reports_router,
+    dispatch_paper_trading_report,
+    dispatch_report,
+    _parse_emails,
+)
 from backend.routers.backtests import router as backtests_router  # noqa: E402
 
 scheduler = AsyncIOScheduler()
@@ -107,6 +112,37 @@ async def lifespan(app: FastAPI):
         logger.info("Daily report scheduled at 20:00 IST → %s", ", ".join(report_recipients))
     else:
         logger.warning("REPORT_EMAIL_TO not set — daily report scheduler disabled.")
+
+    paper_eval_recipients = _parse_emails(
+        os.getenv("PAPER_EVAL_EMAIL_TO", "").strip() or os.getenv("REPORT_EMAIL_TO", "")
+    )
+    if paper_eval_recipients and _env_bool("PAPER_EVAL_EMAIL_ENABLED", True):
+        paper_eval_hours = max(1, _env_int("PAPER_EVAL_EMAIL_INTERVAL_HOURS", 12))
+
+        async def _paper_evaluation_report():
+            try:
+                result = await dispatch_paper_trading_report(paper_eval_recipients, paper_eval_hours)
+                logger.info("Live paper trading email: %s", result.get("message"))
+            except Exception as exc:
+                logger.error("Live paper trading email failed: %s", exc)
+
+        scheduler.add_job(
+            _paper_evaluation_report,
+            "interval",
+            hours=paper_eval_hours,
+            id="live_paper_trading_report",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+        logger.info(
+            "Live paper trading email scheduled every %s hour(s) → %s",
+            paper_eval_hours,
+            ", ".join(paper_eval_recipients),
+        )
+    else:
+        logger.warning("Live paper trading email scheduler disabled.")
+
     if _env_bool("BACKGROUND_TRACKER_ENABLED", True):
         tracker_seconds = max(10, _env_int("BACKGROUND_TRACKER_INTERVAL_SECONDS", 30))
         scheduler.add_job(

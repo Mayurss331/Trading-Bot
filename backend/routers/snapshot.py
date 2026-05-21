@@ -258,6 +258,7 @@ def _sync_build_snapshot(
         "action": analysis["action"],
         "state": analysis["state"],
         "events": analysis["events"],
+        "paper_trades": analysis.get("paper_trades", []),
         "bars": bars_payload(
             bars, frame, limit,
             extra_cols=(

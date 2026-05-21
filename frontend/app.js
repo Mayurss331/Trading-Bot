@@ -14,6 +14,13 @@ META = StrategyMeta(
     score_label="Score",
 )
 
+CHART_CONFIG = {
+    "overlays": ["supertrend"],
+    "panels": ["score", "rsi"],
+    "extra_cols": ["st_line"],
+    "signals": True,
+}
+
 def analyze(bars, ctx):
     frame = base_frame(bars)
     frame["ema_fast"] = ema(frame["Close"], 9)
@@ -72,6 +79,7 @@ const state = {
   reportsFilter: 'all',
   customStrategies: [],
   builtinBacktestStrategies: [],
+  selectedPaperStrategies: [],
   selectedCustomStrategyId: null,
   lastBacktestRunId: null,
   activeBacktestJobId: null,
@@ -236,6 +244,7 @@ const el = {
   btAiCandles: $('btAiCandles'),
   runBacktestBtn: $('runBacktestBtn'),
   paperStrategySet: $('paperStrategySet'),
+  paperStrategyHint: $('paperStrategyHint'),
   paperSelectAllBtn: $('paperSelectAllBtn'),
   paperClearBtn: $('paperClearBtn'),
   runPaperSetBtn: $('runPaperSetBtn'),
@@ -407,6 +416,7 @@ function saveDashboardPreferences() {
     trackerCollapsed: state.trackerCollapsed,
     executionMode: state.realOrdersArmed ? 'real' : 'paper',
     customStrategyId: state.selectedCustomStrategyId || null,
+    paperStrategies: selectedPaperStrategies(),
   };
   try {
     localStorage.setItem(DASHBOARD_PREF_KEY, JSON.stringify({ settings: prefs, savedAt: prefs.savedAt }));
@@ -497,6 +507,9 @@ async function applyDashboardPreferences() {
     );
   }
   state.trackingActive = Boolean(prefs.trackingActive);
+  if (Array.isArray(prefs.paperStrategies)) {
+    state.selectedPaperStrategies = prefs.paperStrategies.map(String).filter(Boolean).slice(0, 20);
+  }
   setTrackerCollapsed(Boolean(prefs.trackerCollapsed));
 }
 
@@ -789,7 +802,47 @@ function _clearSignalMarkers() {
   }
 }
 
-function updateIndicatorOverlays(bars, strategyId, chartConfig) {
+function _paperTradeMarkers(paperTrades, colors) {
+  const markers = [];
+  for (const trade of paperTrades || []) {
+    const entryTime = Math.floor(new Date(trade.entry_ts).getTime() / 1000);
+    if (Number.isFinite(entryTime)) {
+      const isLong = Number(trade.side || 0) > 0;
+      markers.push({
+        time: entryTime,
+        position: isLong ? 'belowBar' : 'aboveBar',
+        color: isLong ? colors.bull : colors.bear,
+        shape: isLong ? 'arrowUp' : 'arrowDown',
+        text: isLong ? 'LONG' : 'SHORT',
+      });
+    }
+    const exitTime = trade.exit_ts ? Math.floor(new Date(trade.exit_ts).getTime() / 1000) : NaN;
+    if (Number.isFinite(exitTime)) {
+      markers.push({
+        time: exitTime,
+        position: Number(trade.side || 0) > 0 ? 'aboveBar' : 'belowBar',
+        color: colors.amber,
+        shape: 'circle',
+        text: trade.exit_reason || 'EXIT',
+      });
+    }
+  }
+  return markers.sort((a, b) => a.time - b.time);
+}
+
+function _setPaperTradeMarkers(paperTrades, colors) {
+  const markers = _paperTradeMarkers(paperTrades, colors);
+  _clearSignalMarkers();
+  if (markers.length > 0) {
+    if (typeof LightweightCharts?.createSeriesMarkers === 'function') {
+      state.signalMarkers = LightweightCharts.createSeriesMarkers(state.candleSeries, markers);
+    } else {
+      try { state.candleSeries.setMarkers(markers); } catch {}
+    }
+  }
+}
+
+function updateIndicatorOverlays(bars, strategyId, chartConfig, paperTrades = []) {
   if (!state.priceChart || !state.candleSeries || !bars || bars.length === 0) return;
 
   const overlays = Array.isArray(chartConfig?.overlays) ? chartConfig.overlays : ['ema', 'bb', 'supertrend'];
@@ -807,6 +860,7 @@ function updateIndicatorOverlays(bars, strategyId, chartConfig) {
   if (strategyId === 'daily_sweep' || overlays.includes('sweep')) {
     ['ema_fast', 'ema_slow', 'bb_upper', 'bb_mid', 'bb_lower', 'vp_poc', 'vp_vah', 'vp_val'].forEach(_removeIndicatorSeries);
     _clearSignalMarkers();
+    if (showSignals) _setPaperTradeMarkers(paperTrades, COLORS);
     return;
   }
 
@@ -909,33 +963,10 @@ function updateIndicatorOverlays(bars, strategyId, chartConfig) {
     ['vp_poc', 'vp_vah', 'vp_val'].forEach(_removeIndicatorSeries);
   }
 
-  // Signal markers: entries only. Raw exit flags are often continuous conditions
-  // and clutter the chart; executed exits remain visible in paper/backtest ledgers.
+  // Trade markers only. Raw setup flags can fire repeatedly and clutter the chart;
+  // paperTrades contains entries/exits actually taken by the paper replay.
   if (!showSignals) { _clearSignalMarkers(); return; }
-  const markers = [];
-  for (const b of bars) {
-    const t = Math.floor(new Date(b.time).getTime() / 1000);
-    if (b.entry_side != null && b.entry_side !== 0) {
-      const isLong = b.entry_side > 0;
-      markers.push({
-        time: t,
-        position: isLong ? 'belowBar' : 'aboveBar',
-        color: isLong ? COLORS.bull : COLORS.bear,
-        shape: isLong ? 'arrowUp' : 'arrowDown',
-        text: isLong ? 'BUY' : 'SELL',
-      });
-    }
-  }
-  markers.sort((a, b) => a.time - b.time);
-
-  _clearSignalMarkers();
-  if (markers.length > 0) {
-    if (typeof LightweightCharts?.createSeriesMarkers === 'function') {
-      state.signalMarkers = LightweightCharts.createSeriesMarkers(state.candleSeries, markers);
-    } else {
-      try { state.candleSeries.setMarkers(markers); } catch {}
-    }
-  }
+  _setPaperTradeMarkers(paperTrades, COLORS);
 }
 
 function updateSweepOverlays(bars, strategyId, indicators) {
@@ -951,33 +982,7 @@ function updateSweepOverlays(bars, strategyId, indicators) {
   };
   const dashed = LightweightCharts?.LineStyle?.Dashed ?? 2;
 
-  const markers = [];
-  for (const b of bars) {
-    const t = Math.floor(new Date(b.time).getTime() / 1000);
-    // BOS — first bar of new 1H bias direction
-    if (b.bos != null && b.bos !== 0) {
-      markers.push({ time: t, position: b.bos > 0 ? 'belowBar' : 'aboveBar',
-        color: COLORS.violet, shape: 'circle', text: 'BOS' });
-    }
-    // Sweep (manipulation entry)
-    if (b.sweep) {
-      markers.push({ time: t, position: b.bias > 0 ? 'belowBar' : 'aboveBar',
-        color: COLORS.amber, shape: b.bias > 0 ? 'arrowUp' : 'arrowDown', text: 'SWEEP' });
-    }
-    // CHoCH
-    if (b.choch) {
-      markers.push({ time: t, position: b.bias > 0 ? 'belowBar' : 'aboveBar',
-        color: COLORS.blue, shape: 'square', text: 'CHoCH' });
-    }
-    // FVG entry
-    if (b.entry_side && b.entry_side !== 0) {
-      markers.push({ time: t, position: b.entry_side > 0 ? 'belowBar' : 'aboveBar',
-        color: b.entry_side > 0 ? COLORS.bull : COLORS.bear,
-        shape: b.entry_side > 0 ? 'arrowUp' : 'arrowDown', text: 'FVG' });
-    }
-  }
-  markers.sort((a, b) => a.time - b.time);
-  _setSeriesMarkers(state.candleSeries, markers);
+  _setSeriesMarkers(state.candleSeries, []);
 
   // FVG band lines (current active FVG from indicators)
   const fvgLow  = indicators?.fvg_low;
@@ -1025,7 +1030,9 @@ function updatePriceChart(bars) {
   }
 }
 
-function chartPanelConfig(strategyId) {
+function chartPanelConfig(strategyInfo) {
+  const strategyId = typeof strategyInfo === 'string' ? strategyInfo : strategyInfo?.id;
+  const chartConfig = typeof strategyInfo === 'object' && strategyInfo ? (strategyInfo.chart_config || {}) : {};
   const hidden = { score: false, rsi: false, scoreTitle: 'Score', scoreSub: 'Strategy signal score', rsiTitle: 'RSI', rsiSub: 'Overbought > 70 · Oversold < 30' };
   const configs = {
     arbitrage:         { ...hidden },
@@ -1040,11 +1047,23 @@ function chartPanelConfig(strategyId) {
     trend_following:   { score: true, rsi: true,  scoreTitle: 'Trend', scoreSub: 'EMA / Supertrend alignment', rsiTitle: 'RSI', rsiSub: 'Trend momentum filter' },
     volatility_squeeze:{ score: true, rsi: true,  scoreTitle: 'Squeeze', scoreSub: 'Breakout strength', rsiTitle: 'RSI', rsiSub: 'Breakout confirmation' },
   };
-  return configs[strategyId] || { score: true, rsi: true, ...hidden };
+  if (configs[strategyId]) return configs[strategyId];
+  if (Array.isArray(chartConfig.panels)) {
+    return {
+      ...hidden,
+      score: chartConfig.panels.includes('score'),
+      rsi: chartConfig.panels.includes('rsi'),
+      scoreTitle: chartConfig.score_title || 'Score',
+      scoreSub: chartConfig.score_subtitle || 'Strategy signal score',
+      rsiTitle: chartConfig.rsi_title || 'RSI',
+      rsiSub: chartConfig.rsi_subtitle || 'Overbought > 70 · Oversold < 30',
+    };
+  }
+  return hidden;
 }
 
-function configureChartPanels(strategyId) {
-  const cfg = chartPanelConfig(strategyId);
+function configureChartPanels(strategyInfo) {
+  const cfg = chartPanelConfig(strategyInfo);
   if (el.scorePanel) el.scorePanel.hidden = !cfg.score;
   if (el.rsiPanel) el.rsiPanel.hidden = !cfg.rsi;
   if (el.chartSubRow) el.chartSubRow.hidden = !cfg.score && !cfg.rsi;
@@ -1239,11 +1258,11 @@ async function loadSnapshot() {
 
   // Charts
   const bars = data.bars || [];
-  const panelCfg = configureChartPanels(data.strategy?.id);
+  const panelCfg = configureChartPanels(data.strategy);
   updatePriceChart(bars);
   updatePositionLines(stateData);
   updateSweepOverlays(bars, data.strategy?.id, data.indicators);
-  updateIndicatorOverlays(bars, data.strategy?.id, data.strategy?.chart_config);
+  updateIndicatorOverlays(bars, data.strategy?.id, data.strategy?.chart_config, data.paper_trades || []);
   if (panelCfg.score) drawScoreChart(bars);
   if (panelCfg.rsi) drawRsiChart(bars);
 
@@ -1992,6 +2011,7 @@ function populateBacktestStrategySelect() {
 function populatePaperStrategySet() {
   if (!el.paperStrategySet) return;
   const selectedSingle = el.backtestStrategySelect?.value || `builtin:${DEFAULT_STRATEGY}`;
+  const saved = new Set(state.selectedPaperStrategies || []);
   const builtins = state.builtinBacktestStrategies.map(s => ({
     value: `builtin:${s.id}`,
     label: s.name || s.id,
@@ -2005,24 +2025,39 @@ function populatePaperStrategySet() {
       kind: 'Custom',
     }));
   const rows = builtins.concat(custom);
+  const hasSaved = rows.some(item => saved.has(item.value));
   el.paperStrategySet.innerHTML = rows.length ? rows.map(item => `
     <label title="${escapeHtml(item.kind)}">
-      <input type="checkbox" value="${escapeHtml(item.value)}" ${item.value === selectedSingle ? 'checked' : ''} />
+      <input type="checkbox" value="${escapeHtml(item.value)}" ${(hasSaved ? saved.has(item.value) : item.value === selectedSingle) ? 'checked' : ''} />
       <span>${escapeHtml(item.label)}</span>
     </label>
   `).join('') : '<div class="empty-row">No strategies available.</div>';
+  state.selectedPaperStrategies = selectedPaperStrategies();
+  updatePaperStrategyHint();
 }
 
 function setPaperStrategyChecks(checked) {
   if (!el.paperStrategySet) return;
   el.paperStrategySet.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = Boolean(checked); });
+  state.selectedPaperStrategies = selectedPaperStrategies();
+  updatePaperStrategyHint();
+  saveDashboardPreferences();
 }
 
 function selectedPaperStrategies() {
   if (!el.paperStrategySet) return [];
-  return Array.from(el.paperStrategySet.querySelectorAll('input[type="checkbox"]:checked'))
+  const checked = Array.from(el.paperStrategySet.querySelectorAll('input[type="checkbox"]:checked'))
     .map(cb => cb.value)
     .filter(Boolean);
+  return checked.length || el.paperStrategySet.children.length ? checked : (state.selectedPaperStrategies || []);
+}
+
+function updatePaperStrategyHint() {
+  if (!el.paperStrategyHint) return;
+  const count = selectedPaperStrategies().length;
+  el.paperStrategyHint.textContent = count
+    ? `${count} selected for paper set runs and 12h email reports.`
+    : 'Select strategies for paper set runs and 12h email reports.';
 }
 
 function renderCustomStrategyForm(strategy) {
@@ -2958,6 +2993,14 @@ function wireEvents() {
   }
   if (el.backtestStrategySelect) {
     el.backtestStrategySelect.addEventListener('change', populatePaperStrategySet);
+  }
+  if (el.paperStrategySet) {
+    el.paperStrategySet.addEventListener('change', e => {
+      if (!e.target.matches('input[type="checkbox"]')) return;
+      state.selectedPaperStrategies = selectedPaperStrategies();
+      updatePaperStrategyHint();
+      saveDashboardPreferences();
+    });
   }
   if (el.paperSelectAllBtn) {
     el.paperSelectAllBtn.addEventListener('click', () => setPaperStrategyChecks(true));

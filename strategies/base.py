@@ -332,10 +332,46 @@ def replay_strategy(
     ctx: StrategyContext,
     max_rows: int = 300,
     same_bar_priority: str = "stop_first",
-) -> tuple[PaperState, list[str]]:
+) -> tuple[PaperState, list[str], list[dict[str, Any]]]:
     state = PaperState()
     events: list[str] = []
+    paper_trades: list[dict[str, Any]] = []
+    active_trade: dict[str, Any] | None = None
     replay = frame.dropna(subset=["Close"]).tail(max_rows)
+
+    def _record_entry(side: int, ts: pd.Timestamp, row: pd.Series) -> None:
+        nonlocal active_trade
+        events.append(enter_trade(state, side, ts, row, ctx))
+        active_trade = {
+            "trade_id": state.trade_id,
+            "side": side,
+            "entry_ts": ts,
+            "entry_px": state.entry_px,
+            "stop_px": state.stop_px,
+            "target_px": state.target_px,
+            "qty": state.qty,
+            "exit_ts": None,
+            "exit_px": None,
+            "exit_reason": None,
+            "pnl": None,
+        }
+        paper_trades.append(active_trade)
+
+    def _record_exit(ts: pd.Timestamp, exit_px: float, reason: str) -> None:
+        nonlocal active_trade
+        entry_px = state.entry_px
+        qty_exit = state.qty_open if np.isfinite(state.qty_open) else state.qty
+        side = state.side
+        pnl = (exit_px - entry_px) * qty_exit if side == LONG else (entry_px - exit_px) * qty_exit
+        events.append(exit_trade(state, ts, exit_px, reason, ctx))
+        if active_trade is not None:
+            active_trade.update({
+                "exit_ts": ts,
+                "exit_px": exit_px,
+                "exit_reason": reason,
+                "pnl": pnl,
+            })
+            active_trade = None
 
     for ts, row in replay.iterrows():
         close = float(row["Close"])
@@ -349,7 +385,7 @@ def replay_strategy(
                 events.append(f"[{fmt_ts(ts)}] SHORT SIGNAL ignored in {ctx.mode.upper()} mode.")
                 continue
             if side in (LONG, SHORT):
-                events.append(enter_trade(state, side, ts, row, ctx))
+                _record_entry(side, ts, row)
             continue
 
         if state.side == LONG:
@@ -363,11 +399,11 @@ def replay_strategy(
             if stop_hit and target_hit:
                 # Both hit same bar — use configured priority
                 if same_bar_priority == "target_first":
-                    events.append(exit_trade(state, ts, state.target_px, "TARGET_SAME_BAR", ctx))
+                    _record_exit(ts, state.target_px, "TARGET_SAME_BAR")
                 else:
-                    events.append(exit_trade(state, ts, state.stop_px, "STOP_SAME_BAR", ctx))
+                    _record_exit(ts, state.stop_px, "STOP_SAME_BAR")
             elif stop_hit:
-                events.append(exit_trade(state, ts, state.stop_px, "STOP", ctx))
+                _record_exit(ts, state.stop_px, "STOP")
             elif np.isfinite(state.tp1_px) and np.isfinite(state.tp1_frac) and state.tp1_frac > 0 and high >= state.tp1_px:
                 qty_exit = (state.qty_open if np.isfinite(state.qty_open) else state.qty) * float(state.tp1_frac)
                 qty_exit = min(qty_exit, state.qty_open if np.isfinite(state.qty_open) else state.qty)
@@ -384,9 +420,9 @@ def replay_strategy(
                     )
                     state.tp1_px = np.nan
             elif target_hit:
-                events.append(exit_trade(state, ts, state.target_px, "TARGET", ctx))
+                _record_exit(ts, state.target_px, "TARGET")
             elif bool(row.get("exit_long", False)):
-                events.append(exit_trade(state, ts, close, "SIGNAL", ctx))
+                _record_exit(ts, close, "SIGNAL")
 
         elif state.side == SHORT:
             if np.isfinite(st_line):
@@ -398,11 +434,11 @@ def replay_strategy(
             target_hit = low <= state.target_px
             if stop_hit and target_hit:
                 if same_bar_priority == "target_first":
-                    events.append(exit_trade(state, ts, state.target_px, "TARGET_SAME_BAR", ctx))
+                    _record_exit(ts, state.target_px, "TARGET_SAME_BAR")
                 else:
-                    events.append(exit_trade(state, ts, state.stop_px, "STOP_SAME_BAR", ctx))
+                    _record_exit(ts, state.stop_px, "STOP_SAME_BAR")
             elif stop_hit:
-                events.append(exit_trade(state, ts, state.stop_px, "STOP", ctx))
+                _record_exit(ts, state.stop_px, "STOP")
             elif np.isfinite(state.tp1_px) and np.isfinite(state.tp1_frac) and state.tp1_frac > 0 and low <= state.tp1_px:
                 qty_exit = (state.qty_open if np.isfinite(state.qty_open) else state.qty) * float(state.tp1_frac)
                 qty_exit = min(qty_exit, state.qty_open if np.isfinite(state.qty_open) else state.qty)
@@ -419,11 +455,11 @@ def replay_strategy(
                     )
                     state.tp1_px = np.nan
             elif target_hit:
-                events.append(exit_trade(state, ts, state.target_px, "TARGET", ctx))
+                _record_exit(ts, state.target_px, "TARGET")
             elif bool(row.get("exit_short", False)):
-                events.append(exit_trade(state, ts, close, "SIGNAL", ctx))
+                _record_exit(ts, close, "SIGNAL")
 
-    return state, events[-80:]
+    return state, events[-80:], paper_trades[-80:]
 
 
 def action_from_latest(frame: pd.DataFrame, state: PaperState, ctx: StrategyContext) -> dict[str, Any]:
@@ -449,7 +485,7 @@ def action_from_latest(frame: pd.DataFrame, state: PaperState, ctx: StrategyCont
 
 def finalize(meta: StrategyMeta, frame: pd.DataFrame, ctx: StrategyContext, notes: list[str] | None = None, extra_indicators: dict | None = None) -> dict[str, Any]:
     frame = frame.dropna(subset=["Close"]).copy()
-    state, events = replay_strategy(frame, ctx)
+    state, events, paper_trades = replay_strategy(frame, ctx)
     action = action_from_latest(frame, state, ctx)
     latest = frame.iloc[-1] if not frame.empty else pd.Series(dtype=object)
     reason = str(latest.get("reason") or meta.description)
@@ -458,6 +494,7 @@ def finalize(meta: StrategyMeta, frame: pd.DataFrame, ctx: StrategyContext, note
         "frame": frame,
         "state": state_payload(state),
         "events": events,
+        "paper_trades": paper_trades,
         "action": action,
         "reason": reason,
         "indicators": {

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select
 
 from ..db.database import AsyncSessionLocal
-from ..db.models import AccountSnapshot, Candle, PositionSnapshot, SignalEvent, StateSnapshot, Trade
+from ..db.models import AccountSnapshot, Candle, PositionSnapshot, SignalEvent, StateSnapshot, Trade, UserSetting
 from ..utils import clean
 
 router = APIRouter(tags=["reports"])
@@ -186,7 +188,12 @@ async def report_pnl_series(exec_mode: str = "all") -> JSONResponse:
 
 
 class SendEmailRequest(BaseModel):
-    to: str
+    to: str = ""
+
+
+class SendPaperEvaluationRequest(BaseModel):
+    to: str = ""
+    strategies: list[str] = Field(default_factory=list)
 
 
 class ClearHistoryRequest(BaseModel):
@@ -199,6 +206,153 @@ def _trade_dicts(trades) -> list[dict]:
 
 def _parse_emails(raw: str) -> list[str]:
     return [addr.strip() for addr in raw.split(",") if addr.strip() and "@" in addr.strip()]
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(float(os.getenv(name, default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _paper_eval_recipients() -> list[str]:
+    raw = os.getenv("PAPER_EVAL_EMAIL_TO", "").strip() or os.getenv("REPORT_EMAIL_TO", "")
+    return _parse_emails(raw)
+
+
+def _paper_eval_strategy_selections(strategies: list[str] | None = None) -> list[str]:
+    if strategies:
+        selected = [str(item).strip() for item in strategies if str(item).strip()]
+    else:
+        raw = os.getenv(
+            "PAPER_EVAL_STRATEGIES",
+            "builtin:confluence,builtin:trend_following,builtin:mean_reversion,builtin:volume_profile",
+        )
+        selected = [item.strip() for item in raw.split(",") if item.strip()]
+    return selected[:20]
+
+
+async def _dashboard_paper_strategies() -> list[str]:
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(UserSetting).where(UserSetting.key == "dashboard"))
+        setting = result.scalar_one_or_none()
+    payload = setting.payload if setting and isinstance(setting.payload, dict) else {}
+    selected = payload.get("paperStrategies")
+    if not isinstance(selected, list):
+        return []
+    return [str(item).strip() for item in selected if str(item).strip()][:20]
+
+
+def _paper_eval_base_payload() -> dict:
+    return {
+        "pair": os.getenv("PAPER_EVAL_PAIR", os.getenv("DEFAULT_PAIR", "B-BTC_USDT")),
+        "market": os.getenv("PAPER_EVAL_MARKET", os.getenv("DEFAULT_MARKET", "BTCUSDT")),
+        "mode": os.getenv("PAPER_EVAL_MODE", os.getenv("DEFAULT_MODE", "futures")),
+        "strategy": "confluence",
+        "timeframe": os.getenv("PAPER_EVAL_TIMEFRAME", "15m"),
+        "lookback_days": _env_int("PAPER_EVAL_LOOKBACK_DAYS", _env_int("DEFAULT_LOOKBACK_DAYS", 10)),
+        "initial_capital": _env_float("PAPER_EVAL_INITIAL_CAPITAL", 10_000.0),
+        "risk": _env_float("PAPER_EVAL_RISK", _env_float("DEFAULT_RISK", 10.0)),
+        "commission_bps": _env_float("PAPER_EVAL_COMMISSION_BPS", 5.0),
+        "spread_bps": _env_float("PAPER_EVAL_SPREAD_BPS", 0.0),
+        "slippage_bps": _env_float("PAPER_EVAL_SLIPPAGE_BPS", 0.0),
+        "leverage": _env_float("PAPER_EVAL_LEVERAGE", _env_float("LEVERAGE", 1.0)),
+        "risk_reward_ratio": _env_float("PAPER_EVAL_RISK_REWARD_RATIO", _env_float("RISK_REWARD_RATIO", 2.0)),
+        "target_mode": os.getenv("PAPER_EVAL_TARGET_MODE", "strategy_or_rr"),
+        "allow_shorts": _env_bool("PAPER_EVAL_ALLOW_SHORTS", True),
+        "fill_model": os.getenv("PAPER_EVAL_FILL_MODEL", "next_open"),
+        "position_sizing": os.getenv("PAPER_EVAL_POSITION_SIZING", "risk_fixed"),
+        "risk_mode": os.getenv("PAPER_EVAL_RISK_MODE", "fixed_amount"),
+        "opposite_signal_mode": os.getenv("PAPER_EVAL_OPPOSITE_SIGNAL_MODE", "ignore"),
+        "same_bar_priority": os.getenv("PAPER_EVAL_SAME_BAR_PRIORITY", "stop_first"),
+        "finalize_open_trade": _env_bool("PAPER_EVAL_FINALIZE_OPEN_TRADE", True),
+        "warmup_bars": _env_int("PAPER_EVAL_WARMUP_BARS", 50),
+        "min_signal_score": _env_float("PAPER_EVAL_MIN_SIGNAL_SCORE", 0.0),
+        "ai_verification_enabled": _env_bool("PAPER_EVAL_AI_VERIFICATION_ENABLED", False),
+        "ai_min_confidence": _env_float("PAPER_EVAL_AI_MIN_CONFIDENCE", 70.0),
+        "ai_candles": _env_int("PAPER_EVAL_AI_CANDLES", 80),
+        "ai_model": os.getenv("PAPER_EVAL_AI_MODEL", os.getenv("OPENAI_BACKTEST_MODEL", "gpt-5.4-mini")),
+    }
+
+
+def _paper_eval_payload_for_selection(base_payload: dict, selection: str) -> tuple[dict | None, str | None]:
+    kind, _, raw_id = selection.partition(":")
+    if not raw_id:
+        kind, raw_id = "builtin", kind
+    payload = dict(base_payload)
+    if kind == "custom":
+        try:
+            custom_id = int(raw_id)
+        except (TypeError, ValueError):
+            return None, "Invalid custom strategy id."
+        payload["custom_strategy_id"] = custom_id
+        payload["strategy"] = "custom"
+    else:
+        payload["custom_strategy_id"] = None
+        payload["strategy"] = raw_id
+    return payload, None
+
+
+def _fmt_metric(value, suffix: str = "", empty: str = "n/a") -> str:
+    if value is None:
+        return empty
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{number:.2f}{suffix}"
+
+
+def _latest_order_text(trade: dict | None) -> str:
+    if not trade:
+        return "No order"
+    side = str(trade.get("side") or "").upper() or "TRADE"
+    entry = _fmt_metric(trade.get("entry_px"))
+    pnl = _fmt_metric(trade.get("net_pnl"), " USDT")
+    reason = trade.get("exit_reason") or ("open" if not trade.get("exit_ts") else "closed")
+    return f"{side} @ {entry}, PnL {pnl}, {reason}"
+
+
+def _paper_eval_csv(results: list[dict]) -> bytes:
+    output = io.StringIO()
+    fields = [
+        "selection", "ok", "run_id", "strategy", "total_return_pct", "sharpe",
+        "max_drawdown_pct", "trades", "win_rate_pct", "net_pnl", "latest_order", "message",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fields)
+    writer.writeheader()
+    for item in results:
+        summary = item.get("summary") or {}
+        latest = item.get("latest_order") if isinstance(item.get("latest_order"), dict) else None
+        writer.writerow({
+            "selection": item.get("selection"),
+            "ok": bool(item.get("ok")),
+            "run_id": item.get("run_id"),
+            "strategy": item.get("strategy"),
+            "total_return_pct": summary.get("total_return_pct"),
+            "sharpe": summary.get("portfolio_sharpe", summary.get("sharpe")),
+            "max_drawdown_pct": summary.get("max_drawdown_pct"),
+            "trades": summary.get("trades"),
+            "win_rate_pct": summary.get("win_rate_pct"),
+            "net_pnl": summary.get("net_pnl"),
+            "latest_order": _latest_order_text(latest),
+            "message": item.get("message", ""),
+        })
+    return output.getvalue().encode("utf-8")
 
 
 async def dispatch_report(to_emails: list[str]) -> dict:
@@ -251,6 +405,211 @@ async def dispatch_report(to_emails: list[str]) -> dict:
     return {"ok": True, "message": msg, "paper_count": len(paper_dicts), "real_count": len(real_dicts)}
 
 
+async def dispatch_paper_evaluation_report(
+    to_emails: list[str] | None = None,
+    strategies: list[str] | None = None,
+) -> dict:
+    """Run the configured paper strategy set and email separate results per strategy."""
+    from backend.backtesting.config import BacktestConfig
+    from backend.backtesting.service import run_and_store_backtest
+    from ..services.email_sender import send_email
+
+    recipients = to_emails or _paper_eval_recipients()
+    if not recipients:
+        raise RuntimeError("PAPER_EVAL_EMAIL_TO or REPORT_EMAIL_TO must contain at least one email address.")
+
+    selections = _paper_eval_strategy_selections(strategies or await _dashboard_paper_strategies())
+    if not selections:
+        raise RuntimeError("No paper evaluation strategies configured.")
+
+    generated_at = datetime.utcnow()
+    base_payload = _paper_eval_base_payload()
+    results: list[dict] = []
+
+    for selection in selections:
+        payload, error = _paper_eval_payload_for_selection(base_payload, selection)
+        if error:
+            results.append({"ok": False, "selection": selection, "message": error})
+            continue
+        cfg = BacktestConfig(**payload).normalized()
+        try:
+            result = await run_and_store_backtest(cfg)
+        except Exception as exc:
+            results.append({"ok": False, "selection": selection, "message": str(exc)})
+            continue
+        if not result.get("ok"):
+            results.append({"ok": False, "selection": selection, "message": result.get("message", "Paper evaluation failed.")})
+            continue
+        trades = result.get("trades") or []
+        results.append({
+            "ok": True,
+            "selection": selection,
+            "run_id": result.get("run_id"),
+            "strategy": result.get("strategy"),
+            "summary": result.get("summary") or {},
+            "latest_order": trades[-1] if trades else None,
+        })
+
+    successful = [item for item in results if item.get("ok")]
+    failed = [item for item in results if not item.get("ok")]
+    date_str = generated_at.strftime("%Y-%m-%d_%H%M")
+    title = f"Paper Strategy Evaluation - {base_payload['market']} {base_payload['timeframe']}"
+    lines = [
+        "CoinDCX Bot - Paper Strategy Evaluation",
+        f"Generated: {generated_at.strftime('%Y-%m-%d %H:%M UTC')}",
+        f"Market: {base_payload['market']} ({base_payload['pair']})",
+        f"Mode/timeframe/lookback: {base_payload['mode']} / {base_payload['timeframe']} / {base_payload['lookback_days']} day(s)",
+        f"Strategies: {len(results)} checked, {len(successful)} passed, {len(failed)} failed",
+        "",
+        "RESULTS",
+        "-------",
+    ]
+    for item in results:
+        if not item.get("ok"):
+            lines.append(f"- {item.get('selection')}: FAILED - {item.get('message')}")
+            continue
+        summary = item.get("summary") or {}
+        latest = item.get("latest_order") if isinstance(item.get("latest_order"), dict) else None
+        lines.append(
+            "- "
+            f"{item.get('selection')} (Run #{item.get('run_id')}): "
+            f"Return {_fmt_metric(summary.get('total_return_pct'), '%')}, "
+            f"Sharpe {_fmt_metric(summary.get('portfolio_sharpe', summary.get('sharpe')))}, "
+            f"DD {_fmt_metric(summary.get('max_drawdown_pct'), '%')}, "
+            f"Trades {summary.get('trades', 0)}, "
+            f"Win {_fmt_metric(summary.get('win_rate_pct'), '%')}; "
+            f"Latest: {_latest_order_text(latest)}"
+        )
+        warnings = summary.get("assumption_warnings") or []
+        if warnings:
+            lines.append(f"  Warnings: {'; '.join(str(w) for w in warnings[:3])}")
+    lines.extend([
+        "",
+        "CSV attachment includes the same strategy-by-strategy metrics for filtering or sharing.",
+        "",
+        "CoinDCX Bot Dashboard",
+    ])
+
+    await asyncio.to_thread(
+        send_email,
+        to_emails=recipients,
+        subject=title,
+        text_content="\n".join(lines),
+        attachments=[{
+            "name": f"paper_strategy_evaluation_{date_str}.csv",
+            "content": _paper_eval_csv(results),
+        }],
+    )
+
+    return {
+        "ok": True,
+        "message": f"Paper strategy evaluation sent to {', '.join(recipients)}.",
+        "count": len(results),
+        "successful": len(successful),
+        "failed": len(failed),
+        "results": results,
+    }
+
+
+async def dispatch_paper_trading_report(to_emails: list[str] | None = None, hours: int | None = None) -> dict:
+    """Email live paper-trading orders grouped by strategy."""
+    from ..services.email_sender import send_email
+
+    recipients = to_emails or _paper_eval_recipients()
+    if not recipients:
+        raise RuntimeError("PAPER_EVAL_EMAIL_TO or REPORT_EMAIL_TO must contain at least one email address.")
+
+    interval_hours = max(1, int(hours or _env_int("PAPER_EVAL_EMAIL_INTERVAL_HOURS", 12)))
+    generated_at = datetime.utcnow()
+    since = generated_at - timedelta(hours=interval_hours)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(Trade)
+            .where(
+                Trade.execution_mode == "paper",
+                Trade.entry_ts >= since,
+            )
+            .order_by(Trade.strategy.asc(), Trade.entry_ts.asc())
+        )
+        trades = result.scalars().all()
+
+    grouped: dict[str, list[Trade]] = {}
+    for trade in trades:
+        grouped.setdefault(trade.strategy or "unknown", []).append(trade)
+
+    lines = [
+        "CoinDCX Bot - Live Paper Trading Report",
+        f"Generated: {generated_at.strftime('%Y-%m-%d %H:%M UTC')}",
+        f"Window: last {interval_hours} hour(s)",
+        f"Paper orders: {len(trades)}",
+        "",
+        "BY STRATEGY",
+        "-----------",
+    ]
+    for strategy, rows in sorted(grouped.items()):
+        closed = [t for t in rows if t.exit_ts is not None]
+        open_rows = [t for t in rows if t.exit_ts is None]
+        pnl = sum(float(t.pnl or 0.0) for t in closed)
+        wins = sum(1 for t in closed if (t.pnl or 0) > 0)
+        win_rate = (wins / len(closed) * 100) if closed else None
+        lines.append(
+            f"- {strategy}: {len(rows)} order(s), {len(open_rows)} open, "
+            f"closed PnL {_fmt_metric(pnl, ' USDT')}, win {_fmt_metric(win_rate, '%')}"
+        )
+        for t in rows[-8:]:
+            status = "OPEN" if t.exit_ts is None else f"CLOSED {t.exit_reason or ''}".strip()
+            side = "LONG" if t.side > 0 else "SHORT"
+            lines.append(
+                f"  #{t.id} {t.pair} {side} {status} "
+                f"entry {_fmt_metric(t.entry_px)} exit {_fmt_metric(t.exit_px)} pnl {_fmt_metric(t.pnl, ' USDT')}"
+            )
+    if not grouped:
+        lines.append("- No paper orders stored in this window.")
+    lines.extend(["", "CoinDCX Bot Dashboard"])
+
+    csv_output = io.StringIO()
+    writer = csv.DictWriter(csv_output, fieldnames=[
+        "id", "strategy", "pair", "side", "status", "entry_ts", "exit_ts",
+        "entry_px", "exit_px", "qty", "risk_usd", "pnl", "exit_reason",
+    ])
+    writer.writeheader()
+    for t in trades:
+        writer.writerow({
+            "id": t.id,
+            "strategy": t.strategy,
+            "pair": t.pair,
+            "side": "LONG" if t.side > 0 else "SHORT",
+            "status": "open" if t.exit_ts is None else "closed",
+            "entry_ts": t.entry_ts.isoformat() if t.entry_ts else "",
+            "exit_ts": t.exit_ts.isoformat() if t.exit_ts else "",
+            "entry_px": t.entry_px,
+            "exit_px": t.exit_px,
+            "qty": t.qty,
+            "risk_usd": t.risk_usd,
+            "pnl": t.pnl,
+            "exit_reason": t.exit_reason,
+        })
+
+    await asyncio.to_thread(
+        send_email,
+        to_emails=recipients,
+        subject=f"CoinDCX Live Paper Report - {generated_at.strftime('%Y-%m-%d %H:%M UTC')}",
+        text_content="\n".join(lines),
+        attachments=[{
+            "name": f"live_paper_trades_{generated_at.strftime('%Y-%m-%d_%H%M')}.csv",
+            "content": csv_output.getvalue().encode("utf-8"),
+        }],
+    )
+
+    return {
+        "ok": True,
+        "message": f"Live paper trading report sent to {', '.join(recipients)}.",
+        "count": len(trades),
+        "strategies": {k: len(v) for k, v in grouped.items()},
+    }
+
+
 @router.post("/api/reports/clear-history")
 async def clear_history(body: ClearHistoryRequest) -> JSONResponse:
     if body.confirm.strip() != "CLEAR HISTORY":
@@ -294,6 +653,34 @@ async def send_email_report(body: SendEmailRequest) -> JSONResponse:
     try:
         result = await dispatch_report(to_emails)
         return JSONResponse(result)
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=500)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "message": f"Failed: {exc}"}, status_code=500)
+
+
+@router.post("/api/reports/send-paper-evaluation")
+async def send_paper_evaluation_report(body: SendPaperEvaluationRequest) -> JSONResponse:
+    to_emails = _parse_emails(body.to) if body.to else _paper_eval_recipients()
+    if not to_emails:
+        return JSONResponse({"ok": False, "message": "No valid email address configured."}, status_code=400)
+    try:
+        result = await dispatch_paper_evaluation_report(to_emails, body.strategies)
+        return JSONResponse(clean(result))
+    except RuntimeError as exc:
+        return JSONResponse({"ok": False, "message": str(exc)}, status_code=500)
+    except Exception as exc:
+        return JSONResponse({"ok": False, "message": f"Failed: {exc}"}, status_code=500)
+
+
+@router.post("/api/reports/send-paper-trading")
+async def send_paper_trading_report(body: SendEmailRequest) -> JSONResponse:
+    to_emails = _parse_emails(body.to) if body.to else _paper_eval_recipients()
+    if not to_emails:
+        return JSONResponse({"ok": False, "message": "No valid email address configured."}, status_code=400)
+    try:
+        result = await dispatch_paper_trading_report(to_emails)
+        return JSONResponse(clean(result))
     except RuntimeError as exc:
         return JSONResponse({"ok": False, "message": str(exc)}, status_code=500)
     except Exception as exc:
