@@ -273,16 +273,21 @@ def state_payload(state: PaperState) -> dict[str, Any]:
 def enter_trade(state: PaperState, side: int, ts: pd.Timestamp, row: pd.Series, ctx: StrategyContext) -> str:
     entry = float(row["Close"])
     stop_hint = row.get("stop_px", np.nan)
+    target_hint = row.get("target_px", np.nan)
     tp1_hint = row.get("tp1_px", np.nan)
     tp2_hint = row.get("tp2_px", np.nan)
     tp1_frac = row.get("tp1_frac", np.nan)
-    use_custom = np.isfinite(stop_hint) and (np.isfinite(tp1_hint) or np.isfinite(tp2_hint))
+    use_custom = np.isfinite(stop_hint) and (
+        np.isfinite(target_hint) or np.isfinite(tp1_hint) or np.isfinite(tp2_hint)
+    )
     if use_custom:
         stop = float(stop_hint)
         if np.isfinite(tp1_hint) and np.isfinite(tp2_hint):
             target = float(tp2_hint)
         elif np.isfinite(tp2_hint):
             target = float(tp2_hint)
+        elif np.isfinite(target_hint):
+            target = float(target_hint)
         else:
             target = float(tp1_hint)
         risk = risk_per_unit(entry, stop)
@@ -391,7 +396,7 @@ def replay_strategy(
         if state.side == LONG:
             if np.isfinite(st_line):
                 next_stop = max(state.stop_px, st_line)
-                if next_stop > state.stop_px + 1e-9:
+                if next_stop < close and next_stop > state.stop_px + 1e-9:
                     state.stop_px = next_stop
                     events.append(f"[{fmt_ts(ts)}] TRAIL LONG SL -> {state.stop_px:,.4f}")
             stop_hit = low <= state.stop_px
@@ -427,7 +432,7 @@ def replay_strategy(
         elif state.side == SHORT:
             if np.isfinite(st_line):
                 next_stop = min(state.stop_px, st_line)
-                if next_stop < state.stop_px - 1e-9:
+                if next_stop > close and next_stop < state.stop_px - 1e-9:
                     state.stop_px = next_stop
                     events.append(f"[{fmt_ts(ts)}] TRAIL SHORT SL -> {state.stop_px:,.4f}")
             stop_hit = high >= state.stop_px

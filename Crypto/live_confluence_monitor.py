@@ -936,7 +936,7 @@ def _dynamic_leverage_for_plan(
     note_parts: list[str] = []
 
     if structure_rr is not None and rr > 0:
-        min_structure_rr = max(_env_float("MIN_STRUCTURE_RR", rr), 0.1)
+        min_structure_rr = max(_env_float("MIN_STRUCTURE_RR", 1.0), 1.0)
         if structure_rr < min_structure_rr:
             rr_scale = max(structure_rr / min_structure_rr, 0.1)
             note_parts.append(f"rr_scale={rr_scale:.2f}")
@@ -1133,8 +1133,8 @@ def _build_trade_plan(
             stop_px = entry - min_gap
             stop_source = "minimum_gap"
         risk_per_unit = _risk_per_unit(entry, stop_px)
-        target_px = entry + rr * risk_per_unit
-        structure_rr = ((resistance - entry) / risk_per_unit) if resistance is not None else None
+        target_px = resistance if resistance is not None else np.nan
+        structure_rr = ((target_px - entry) / risk_per_unit) if np.isfinite(target_px) else None
     else:
         if resistance is not None:
             stop_px = resistance + atr * stop_buffer_atr
@@ -1149,15 +1149,17 @@ def _build_trade_plan(
             stop_px = entry + min_gap
             stop_source = "minimum_gap"
         risk_per_unit = _risk_per_unit(entry, stop_px)
-        target_px = entry - rr * risk_per_unit
-        structure_rr = ((entry - support) / risk_per_unit) if support is not None else None
+        target_px = support if support is not None else np.nan
+        structure_rr = ((entry - target_px) / risk_per_unit) if np.isfinite(target_px) else None
 
     blocked = None
-    min_structure_rr = max(_env_float("MIN_STRUCTURE_RR", rr), 0.1)
-    if structure_rr is not None and structure_rr < min_structure_rr:
+    min_structure_rr = max(_env_float("MIN_STRUCTURE_RR", 1.0), 1.0)
+    if structure_rr is None:
+        blocked = f"no nearest {'resistance' if side == 1 else 'support'} target found"
+    elif structure_rr <= min_structure_rr:
         blocked = (
             f"nearest {'resistance' if side == 1 else 'support'} offers only {structure_rr:.2f}R; "
-            f"minimum required is {min_structure_rr:.2f}R"
+            f"must be > {min_structure_rr:.2f}R"
         )
 
     qty = risk_amount / risk_per_unit if risk_per_unit > 0 else 0.0
@@ -1740,10 +1742,21 @@ def _enter_trade(
     stop_override: float | None = None,
     target_override: float | None = None,
 ) -> str:
-    stop_px = stop_override if stop_override is not None else st_line
-    risk_per_unit = _risk_per_unit(px, stop_px)
+    if stop_override is not None:
+        stop_px = stop_override
+        risk_per_unit = _risk_per_unit(px, stop_px)
+        target = target_override if target_override is not None else _target_from_stop(side, px, stop_px, 2.0)
+    else:
+        brackets = _derive_brackets(side, px, st_line)
+        if brackets is None:
+            stop_px = st_line
+            risk_per_unit = _risk_per_unit(px, stop_px)
+            target = target_override if target_override is not None else _target_from_stop(side, px, stop_px, 2.0)
+        else:
+            stop_px, target, risk_per_unit = brackets
+            if target_override is not None:
+                target = target_override
     qty = qty_override if qty_override is not None else risk_dollars / risk_per_unit
-    target = target_override if target_override is not None else (px + 2 * risk_per_unit if side == 1 else px - 2 * risk_per_unit)
     notional = qty * px
 
     state.side = side
@@ -2128,7 +2141,9 @@ def process_closed_bar_futures(
         else:
             next_stop_norm, next_target_norm = next_stop, state.target_px
         moved = (
-            next_stop_norm > state.stop_px + 1e-9 if state.side == 1 else next_stop_norm < state.stop_px - 1e-9
+            next_stop_norm < close and next_stop_norm > state.stop_px + 1e-9
+            if state.side == 1
+            else next_stop_norm > close and next_stop_norm < state.stop_px - 1e-9
         )
         if moved:
             if _derive_brackets(state.side, state.entry_px, next_stop_norm) is None:
@@ -2217,11 +2232,15 @@ def process_closed_bar(
                 target_override = plan.target_px
                 leverage_override = plan.leverage
             else:
-                desired_qty = _desired_qty(close, st_line, cfg.risk_dollars)
-                entry_qty, cap_msg = _cap_entry_qty(1, desired_qty, close, cfg)
-                risk_amount = cfg.risk_dollars
-                stop_override = None
-                target_override = None
+                plan = _build_trade_plan(1, ts, row, history, cfg)
+                events.append(f"[{_fmt_ts(ts)}] {_plan_summary(plan)}")
+                if plan.blocked_reason:
+                    events.append(f"[{_fmt_ts(ts)}] LONG ENTRY BLOCKED | {plan.blocked_reason}")
+                    return events
+                entry_qty, cap_msg = _cap_entry_qty(1, plan.qty, close, cfg)
+                risk_amount = plan.risk_amount
+                stop_override = plan.stop_px
+                target_override = plan.target_px
                 leverage_override = None
             if entry_qty <= 0:
                 events.append(f"[{_fmt_ts(ts)}] LONG ENTRY BLOCKED | {cap_msg or 'qty <= 0'}")
@@ -2289,11 +2308,15 @@ def process_closed_bar(
                 target_override = plan.target_px
                 leverage_override = plan.leverage
             else:
-                desired_qty = _desired_qty(close, st_line, cfg.risk_dollars)
-                entry_qty, cap_msg = _cap_entry_qty(-1, desired_qty, close, cfg)
-                risk_amount = cfg.risk_dollars
-                stop_override = None
-                target_override = None
+                plan = _build_trade_plan(-1, ts, row, history, cfg)
+                events.append(f"[{_fmt_ts(ts)}] {_plan_summary(plan)}")
+                if plan.blocked_reason:
+                    events.append(f"[{_fmt_ts(ts)}] SHORT ENTRY BLOCKED | {plan.blocked_reason}")
+                    return events
+                entry_qty, cap_msg = _cap_entry_qty(-1, plan.qty, close, cfg)
+                risk_amount = plan.risk_amount
+                stop_override = plan.stop_px
+                target_override = plan.target_px
                 leverage_override = None
             if entry_qty <= 0:
                 events.append(f"[{_fmt_ts(ts)}] SHORT ENTRY BLOCKED | {cap_msg or 'qty <= 0'}")
@@ -2337,7 +2360,7 @@ def process_closed_bar(
     if state.side == 1:
         prev_stop = state.stop_px
         next_stop = max(state.stop_px, st_line)
-        if next_stop > prev_stop + 1e-9:
+        if next_stop < close and next_stop > prev_stop + 1e-9:
             if cfg.execution_mode == "margin" and cfg.place_orders and state.broker_order_id:
                 ok, broker_msg = _margin_edit_sl(state.broker_order_id, next_stop, cfg)
                 if ok:
@@ -2390,7 +2413,7 @@ def process_closed_bar(
     if state.side == -1:
         prev_stop = state.stop_px
         next_stop = min(state.stop_px, st_line)
-        if next_stop < prev_stop - 1e-9:
+        if next_stop > close and next_stop < prev_stop - 1e-9:
             if cfg.execution_mode == "margin" and cfg.place_orders and state.broker_order_id:
                 ok, broker_msg = _margin_edit_sl(state.broker_order_id, next_stop, cfg)
                 if ok:
